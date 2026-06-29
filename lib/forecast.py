@@ -565,12 +565,11 @@ def _eval_horizon(label, h, model_fc, origins, anchors, prices, dates, names, fi
                   if np.isfinite(p)]
         coverage = float(np.mean(inside)) if inside else None
 
-    # Final forward forecast: refit combiner params on ALL valid windows, then project.
+    # Final forward forecast: use the SAME combiner params chosen on FIT (do NOT refit on
+    # all windows) so (a) the forward path never sees the TEST fold, and (b) the conformal
+    # band residuals (from `chosen`) match the exact params that built the path.
     all_i = list(range(W))
-    all_mapes = {nm: _metrics(preds_by[nm], actual, anchor)["mape"] for nm in kept}
-    full_weights = _inv_weights(all_mapes)
-    full_coefs = _stack_fit(preds_by, kept, actual, all_i) if best_kind == "stacking" else coefs
-    path = _combine_final(best_kind, kept, full_weights, full_coefs, final_fc, h)
+    path = _combine_final(best_kind, kept, weights, coefs, final_fc, h)
 
     rel_all = (actual - chosen(all_i)) / np.where(actual != 0, actual, np.nan)
     rel_all = np.clip(rel_all[np.isfinite(rel_all)], -0.99, 5.0)

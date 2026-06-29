@@ -40,7 +40,9 @@ def compute_features(prices: np.ndarray) -> pd.DataFrame:
     gain, loss = delta.clip(lower=0), -delta.clip(upper=0)
     ag = gain.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
     al = loss.ewm(alpha=1 / 14, min_periods=14, adjust=False).mean()
-    out["rsi14"] = (100 - 100 / (1 + ag / al.replace(0, np.nan))) / 100.0
+    # np.maximum(al, eps) instead of replace(0, NaN): a pure uptrend (al==0) -> RSI 1.0,
+    # not NaN — so trending rows aren't dropped (which would bias band calibration).
+    out["rsi14"] = (100 - 100 / (1 + ag / np.maximum(al, 1e-10))) / 100.0
 
     # Bollinger z-score (mean reversion) + rolling volatility (risk).
     sma20, std20 = s.rolling(20).mean(), s.rolling(20).std()
