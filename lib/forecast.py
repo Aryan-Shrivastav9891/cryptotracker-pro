@@ -373,8 +373,6 @@ def forecast_coin(coin_id: str, symbol: str, days: int = 540) -> Optional[Dict[s
 
     current_price = float(prices[-1])
     last_date = dates[-1]
-    rng = np.random.default_rng(42)  # fixed seed -> bands reproducible across reruns
-    base_rel: Optional[np.ndarray] = None  # one-step ensemble errors, set from the 1D pass
 
     horizons_out: List[Dict[str, Any]] = []
     for label, h in HORIZONS.items():
@@ -408,11 +406,9 @@ def forecast_coin(coin_id: str, symbol: str, days: int = 540) -> Optional[Dict[s
         reliable = bool(skill is not None and skill > 0 and ens_m["directional"] is not None
                         and ens_m["directional"] > 0.5 and len(si) >= MIN_SCORE)
 
-        # Capture one-step ensemble errors (from the 1D horizon) for the bands.
-        if h == 1:
-            r = (actual_s - ens_s) / np.where(actual_s != 0, actual_s, np.nan)
-            r = r[np.isfinite(r)]
-            base_rel = np.clip(r, -0.99, 1.0) if len(r) else None
+        # This horizon's OWN out-of-sample relative errors (no i.i.d. 1-step assumption).
+        rel_h = (actual_s - ens_s) / np.where(actual_s != 0, actual_s, np.nan)
+        rel_h = np.clip(rel_h[np.isfinite(rel_h)], -0.99, 5.0)
 
         # Final ensemble path for this horizon (full-data forecasts, horizon weights).
         avail = [nm for nm in kept if nm in final_fc and weights.get(nm, 0) > 0]
@@ -424,7 +420,7 @@ def forecast_coin(coin_id: str, symbol: str, days: int = 540) -> Optional[Dict[s
             path += (weights[nm] / wsum) * final_fc[nm][:h]
         path = np.clip(path, 0.0, None)
 
-        lower, upper = _band(path, base_rel, h, rng)
+        lower, upper = _band(path, rel_h)
         predicted_price = float(path[-1])
         exp_ret = (predicted_price - current_price) / current_price if current_price else 0.0
         signal, reasoning = make_signal(exp_ret, ens_m["mape"], reliable)
@@ -454,14 +450,20 @@ def forecast_coin(coin_id: str, symbol: str, days: int = 540) -> Optional[Dict[s
     }
 
 
-def _band(path: np.ndarray, base_rel: Optional[np.ndarray], h: int, rng) -> Tuple[np.ndarray, np.ndarray]:
-    """80% band: bootstrap one-step rel errors, compounded out to each step."""
-    if base_rel is not None and len(base_rel) >= 5:
-        draws = rng.choice(base_rel, size=(MC_SIMS, h), replace=True)
-        sim = path[None, :] * np.cumprod(1.0 + draws, axis=1)
-        return (np.clip(np.percentile(sim, 10, axis=0), 0.0, None),
-                np.clip(np.percentile(sim, 90, axis=0), 0.0, None))
-    return path.copy(), path.copy()
+def _band(path: np.ndarray, rel_h: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """80% band from the horizon's OWN h-step relative errors (10th/90th pct),
+    widened from step 1 to the horizon end via sqrt-time scaling. Uses each
+    horizon's measured error directly — no i.i.d. one-step compounding assumption."""
+    h = len(path)
+    if rel_h is None or len(rel_h) < 5:
+        return path.copy(), path.copy()
+    p10, p90 = float(np.percentile(rel_h, 10)), float(np.percentile(rel_h, 90))
+    lower, upper = np.empty(h), np.empty(h)
+    for k in range(1, h + 1):
+        scale = np.sqrt(k / h)  # grows to the full measured h-step error at the end
+        lower[k - 1] = max(0.0, path[k - 1] * (1.0 + p10 * scale))
+        upper[k - 1] = max(0.0, path[k - 1] * (1.0 + p90 * scale))
+    return lower, upper
 
 
 def _unreliable_horizon(label, h, current_price, last_date, final_fc, names, dates, prices):

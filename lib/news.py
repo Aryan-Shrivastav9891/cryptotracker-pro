@@ -12,7 +12,9 @@ Never the main driver of any trading signal — only a small, labeled tilt.
 """
 from __future__ import annotations
 
+import calendar
 import os
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -134,14 +136,14 @@ def _fetch_rss(symbol: str, name: Optional[str], limit: int) -> List[Dict[str, A
             title = entry.get("title", "") or ""
             summary = entry.get("summary", "") or ""
             hay = (title + " " + summary).lower()
-            if not any(term in hay for term in terms):
+            # Word-boundary match so short tickers ("AMP") don't hit "Sample"/"Ampere".
+            if not any(re.search(r"\b" + re.escape(term) + r"\b", hay) for term in terms):
                 continue
             ts = None
             if entry.get("published_parsed"):
                 try:
-                    import time
-
-                    ts = time.mktime(entry["published_parsed"])
+                    # published_parsed is UTC; timegm reads it as UTC (mktime would assume local).
+                    ts = calendar.timegm(entry["published_parsed"])
                 except Exception:
                     ts = None
             out.append(_normalize(title, entry.get("link"), source, ts, summary))

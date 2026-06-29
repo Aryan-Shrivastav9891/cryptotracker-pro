@@ -67,7 +67,8 @@ with st.status(f"Training ensemble for {name} across all horizons…", expanded=
     result = forecast.forecast_coin(coin_id, symbol, days=days)
     if not result:
         status.update(label="Not enough history to backtest", state="error")
-        st.warning(f"Not enough daily history to backtest {name} honestly. Try another coin.")
+        st.warning(f"Not enough daily history to backtest {name} honestly (need ~70+ daily "
+                   f"candles). Try a longer history window, or another coin.")
         st.stop()
     st.write("📰 Fetching news + scoring sentiment…")
     sent = news.news_sentiment(symbol, name=name, limit=8)
@@ -132,8 +133,10 @@ with a:
             tag = {"Bullish": "🟢", "Bearish": "🔴", "Neutral": "⚪"}
             for art in sent["items"][:6]:
                 lab = "Bullish" if art["sentiment"] > 0.05 else "Bearish" if art["sentiment"] < -0.05 else "Neutral"
+                title = art["title"] or "Untitled"
+                title = title[:120] + ("…" if len(title) > 120 else "")
                 st.markdown(
-                    f"- {tag[lab]} [{art['title'] or 'Untitled'}]({art['url']}) "
+                    f"- {tag[lab]} [{title}]({art['url']}) "
                     f"<span class='ctp-muted'>· {art['source']} {art['published']}</span>",
                     unsafe_allow_html=True)
         else:

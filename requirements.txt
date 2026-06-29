@@ -1,6 +1,6 @@
 # CryptoTracker Pro — Python (Streamlit) edition
 # Core stack (always required). Installs cleanly on Python 3.9+.
-streamlit>=1.40
+streamlit>=1.50          # uses width="stretch" + hide_index in st.dataframe/button
 requests>=2.31
 pandas>=2.0
 numpy>=1.24
