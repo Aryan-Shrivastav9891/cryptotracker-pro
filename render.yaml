@@ -1,0 +1,12 @@
+# Render.com blueprint — one service that runs the Streamlit server.
+# Deploy: push to GitHub, then on render.com -> New + -> Blueprint -> pick this repo.
+services:
+  - type: web
+    name: cryptotracker-pro
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.11.9"
