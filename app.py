@@ -30,6 +30,7 @@ pages = {
         st.Page("views/predicted.py", title="AI Predicted", icon=":material/trending_up:"),
         st.Page("views/future.py", title="Future Gains", icon=":material/schedule:"),
         st.Page("views/intraday.py", title="Intraday Signal Lab", icon=":material/bolt:"),
+        st.Page("views/live.py", title="Live Paper-Trading", icon=":material/sensors:"),
     ],
     "Explore": [
         st.Page("views/coin_details.py", title="Coin Details", icon=":material/info:"),

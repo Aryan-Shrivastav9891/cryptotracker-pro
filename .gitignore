@@ -153,3 +153,7 @@ env/
 
 # Generated datasets (regenerable via scripts/fetch_crypto_data.py)
 data/*.csv
+# Live paper-trading state (regenerable)
+data/live/
+data/*.db
+*.db
