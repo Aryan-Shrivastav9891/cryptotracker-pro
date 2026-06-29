@@ -5,10 +5,12 @@ CoinCard, Footer) into reusable Streamlit helpers.
 from __future__ import annotations
 
 import html
+import json
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import streamlit as st
+import streamlit.components.v1 as components
 
 from lib import glossary, model
 from lib.formatting import (
@@ -35,68 +37,263 @@ def init_state() -> None:
 # --------------------------------------------------------------------------- #
 # Theming (runtime dark mode via injected CSS)
 # --------------------------------------------------------------------------- #
-def apply_theme(dark: bool) -> None:
+def tokens(dark: bool) -> Dict[str, str]:
+    """Single source of truth for the design palette (used by CSS + components)."""
     if dark:
-        css = """
-        <style>
-        .stApp { background-color: #0f172a; }
-        .stApp, .stApp p, .stApp span, .stApp li,
-        .stApp h1, .stApp h2, .stApp h3, .stApp h4, .stApp label,
-        [data-testid="stMetricValue"], [data-testid="stMetricLabel"] { color: #e5e7eb; }
-        [data-testid="stSidebar"] { background-color: #111827; }
-        .ctp-card { background-color: #1f2937; border: 1px solid #374151; }
-        .ctp-muted { color: #9ca3af !important; }
-        </style>
-        """
-    else:
-        css = """
-        <style>
-        .ctp-card { background-color: #ffffff; border: 1px solid #e5e7eb; }
-        .ctp-muted { color: #6b7280 !important; }
-        </style>
-        """
-    # Brand styling shared by both themes.
-    css += """
-    <style>
-    .ctp-brand {
-        font-size: 2.2rem; font-weight: 800; margin-bottom: 0;
-        background: linear-gradient(90deg, #7c3aed, #3b82f6);
-        -webkit-background-clip: text; background-clip: text;
-        -webkit-text-fill-color: transparent;
+        return {
+            "appbg": "radial-gradient(1100px 560px at 18% -12%, #15213b 0%, #0b1020 58%)",
+            "surface": "rgba(30,41,59,0.55)", "surface_solid": "#0f1830",
+            "border": "rgba(148,163,184,0.18)", "text": "#e6eaf2",
+            "muted": "#94a3b8", "accent": "#8b5cf6", "secondary": "#22d3ee",
+            "success": "#34d399", "danger": "#f87171", "sidebar": "#0b1228",
+            "shadow": "0 10px 30px rgba(0,0,0,0.45)", "shadow_hover": "0 16px 42px rgba(0,0,0,0.55)",
+        }
+    return {
+        "appbg": "radial-gradient(1100px 560px at 18% -12%, #eef2ff 0%, #f4f6fb 58%)",
+        "surface": "rgba(255,255,255,0.72)", "surface_solid": "#ffffff",
+        "border": "rgba(15,23,42,0.08)", "text": "#0f172a",
+        "muted": "#5b6678", "accent": "#7c3aed", "secondary": "#0891b2",
+        "success": "#059669", "danger": "#dc2626", "sidebar": "#ffffff",
+        "shadow": "0 10px 24px rgba(2,6,23,0.08)", "shadow_hover": "0 16px 36px rgba(2,6,23,0.14)",
     }
-    .ctp-card { border-radius: 0.85rem; padding: 1rem 1.15rem; }
-    .ctp-badge { padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
-    .ctp-pill { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; }
 
-    /* --- Glossary hover tooltips (work in both light & dark) --- */
-    .gloss {
-        border-bottom: 1px dotted #7c3aed;
-        background-color: rgba(124, 58, 237, 0.12);  /* subtle highlight -> discoverable + AA contrast in both themes */
-        border-radius: 3px; padding: 0 2px;
-        cursor: help;
-        position: relative;
-    }
-    .gloss::after {
-        content: attr(data-tip);
-        position: absolute; left: 50%; bottom: 150%; transform: translateX(-50%);
-        width: 240px; max-width: 80vw; white-space: normal; text-align: left;
-        background: #1f2937; color: #f9fafb;
-        border: 1px solid #7c3aed; border-radius: 8px;
-        padding: 8px 10px; font-size: 0.78rem; font-weight: 400; line-height: 1.35;
-        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
-        opacity: 0; visibility: hidden; transition: opacity .15s ease;
-        z-index: 9999; pointer-events: none;
-    }
-    .gloss::before {
-        content: ""; position: absolute; left: 50%; bottom: 150%;
-        transform: translate(-50%, 100%);
-        border: 6px solid transparent; border-top-color: #7c3aed;
-        opacity: 0; visibility: hidden; transition: opacity .15s ease; z-index: 9999;
-    }
-    .gloss:hover::after, .gloss:hover::before { opacity: 1; visibility: visible; }
-    </style>
+
+_FONTS = ("<style>@import url('https://fonts.googleapis.com/css2?"
+          "family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');</style>")
+
+_STATIC_CSS = """
+.stApp { background: var(--bg); transition: background .4s ease, color .4s ease; }
+.stApp, .stApp p, .stApp span, .stApp li, .stApp label {
+    color: var(--text); font-family: 'Inter', system-ui, -apple-system, sans-serif;
+}
+h1, h2, h3, h4 { font-family: 'Space Grotesk', 'Inter', sans-serif; letter-spacing: -.01em; color: var(--text); }
+[data-testid="stMetricValue"] { font-family: 'Space Grotesk', 'Inter', sans-serif; color: var(--text); }
+[data-testid="stMetricLabel"] { color: var(--muted); }
+/* glassmorphism cards (Streamlit bordered containers) */
+div[data-testid="stVerticalBlockBorderWrapper"] {
+    background: var(--surface);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    border: 1px solid var(--border) !important; border-radius: var(--radius) !important;
+    box-shadow: var(--shadow); transition: transform .18s ease, box-shadow .18s ease;
+}
+div[data-testid="stVerticalBlockBorderWrapper"]:hover {
+    transform: translateY(-3px); box-shadow: var(--shadow-hover);
+}
+.stButton > button { border-radius: 12px; border: 1px solid var(--border); transition: all .15s ease; }
+.stButton > button:hover { transform: translateY(-1px); box-shadow: var(--shadow); border-color: var(--accent); }
+@keyframes ctp-shimmer { 0% { background-position: -468px 0 } 100% { background-position: 468px 0 } }
+.ctp-skeleton {
+    background: linear-gradient(90deg, var(--surface) 25%, rgba(148,163,184,.18) 37%, var(--surface) 63%);
+    background-size: 936px 100%; animation: ctp-shimmer 1.5s infinite linear; border-radius: 12px;
+}
+.ctp-brand {
+    font-size: 2.3rem; font-weight: 700; margin-bottom: 0;
+    background: linear-gradient(90deg, var(--accent), var(--secondary));
+    -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+}
+.ctp-muted { color: var(--muted) !important; }
+.ctp-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.15rem; }
+.ctp-badge { padding: 2px 10px; border-radius: 999px; font-size: .8rem; font-weight: 600; }
+.ctp-pill { padding: 2px 8px; border-radius: 999px; font-size: .72rem; }
+.gloss {
+    border-bottom: 1px dotted var(--accent); background: rgba(124,58,237,.12);
+    border-radius: 3px; padding: 0 2px; cursor: help; position: relative;
+}
+.gloss::after {
+    content: attr(data-tip); position: absolute; left: 50%; bottom: 150%; transform: translateX(-50%);
+    width: 240px; max-width: 80vw; white-space: normal; text-align: left;
+    background: #0f172a; color: #f9fafb; border: 1px solid var(--accent); border-radius: 8px;
+    padding: 8px 10px; font-size: .78rem; line-height: 1.35; box-shadow: 0 6px 20px rgba(0,0,0,.35);
+    opacity: 0; visibility: hidden; transition: opacity .15s ease; z-index: 9999; pointer-events: none;
+}
+.gloss:hover::after { opacity: 1; visibility: visible; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important;
+        transition-duration: .001ms !important; }
+}
+"""
+
+
+def apply_theme(dark: bool) -> None:
+    """Inject the full design system (tokens + glass cards + fonts) for the active theme.
+
+    Emitted every rerun (cheap, idempotent by position) so the dark/light toggle
+    updates instantly; runtime-heavy animation lives in the anime.js components.
     """
-    st.markdown(css, unsafe_allow_html=True)
+    t = tokens(dark)
+    css_vars = (
+        ":root{"
+        f"--bg:{t['appbg']};--surface:{t['surface']};--border:{t['border']};"
+        f"--text:{t['text']};--muted:{t['muted']};--accent:{t['accent']};"
+        f"--secondary:{t['secondary']};--success:{t['success']};--danger:{t['danger']};"
+        f"--shadow:{t['shadow']};--shadow-hover:{t['shadow_hover']};--radius:18px;"
+        "}"
+    )
+    sidebar = f"[data-testid='stSidebar']{{background:{t['sidebar']};}}"
+    st.markdown(_FONTS + "<style>" + css_vars + _STATIC_CSS + sidebar + "</style>",
+                unsafe_allow_html=True)
+
+
+inject_theme = apply_theme  # alias per the design-system API
+
+
+# --------------------------------------------------------------------------- #
+# anime.js components (self-contained iframes; the ONLY place JS animation lives)
+# --------------------------------------------------------------------------- #
+_ANIME_CDN = "https://cdnjs.cloudflare.com/ajax/libs/animejs/3.2.1/anime.min.js"
+
+_BENTO_CSS = """
+*{box-sizing:border-box;} html,body{margin:0;background:transparent;}
+body{font-family:'Inter',system-ui,-apple-system,sans-serif;color:var(--text);}
+.bento{display:grid;gap:14px;grid-template-columns:repeat(4,1fr);
+  grid-template-areas:"hero hero sig sig" "hero hero k1 k2" "hero hero k3 k4";}
+.cell{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:14px 16px;
+  box-shadow:var(--shadow);opacity:0;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);}
+.lab{font-size:.70rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);}
+.hero{grid-area:hero;display:flex;flex-direction:column;justify-content:center;min-height:178px;position:relative;overflow:hidden;}
+.hero .big{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:2.5rem;line-height:1.05;color:var(--text);}
+.hero .delta{font-weight:600;margin-top:2px;}
+.hero .spark{width:100%;height:48px;margin-top:10px;}
+.hero::after{content:"";position:absolute;top:0;left:-60%;width:40%;height:100%;
+  background:linear-gradient(120deg,transparent,rgba(255,255,255,.20),transparent);transform:skewX(-20deg);transition:left .6s ease;}
+.hero:hover{transform:scale(1.012);transition:transform .2s ease;}
+.hero:hover::after{left:130%;}
+.kpi{display:flex;flex-direction:column;justify-content:center;}
+.kpi .val{font-family:'Space Grotesk',sans-serif;font-weight:700;font-size:1.55rem;color:var(--text);margin-top:3px;}
+.sig{grid-area:sig;display:flex;flex-direction:column;gap:8px;justify-content:center;}
+.badge{display:inline-block;align-self:flex-start;padding:6px 16px;border-radius:999px;font-weight:700;font-size:1.05rem;border:1.5px solid;}
+.badge.buy{color:var(--success);border-color:var(--success);animation:pulseG 1.9s infinite;}
+.badge.sell{color:var(--danger);border-color:var(--danger);animation:pulseR 1.9s infinite;}
+.badge.hold,.badge.none{color:var(--muted);border-color:var(--border);}
+@keyframes pulseG{0%{box-shadow:0 0 0 0 rgba(52,211,153,.45)}70%{box-shadow:0 0 0 13px rgba(52,211,153,0)}100%{box-shadow:0 0 0 0 rgba(52,211,153,0)}}
+@keyframes pulseR{0%{box-shadow:0 0 0 0 rgba(248,113,113,.45)}70%{box-shadow:0 0 0 13px rgba(248,113,113,0)}100%{box-shadow:0 0 0 0 rgba(248,113,113,0)}}
+@media (max-width:680px){.bento{grid-template-columns:1fr 1fr;grid-template-areas:"hero hero" "sig sig" "k1 k2" "k3 k4";}}
+@media (prefers-reduced-motion: reduce){.cell{opacity:1!important;}.badge{animation:none!important;}.hero::after{display:none;}}
+"""
+
+_BENTO_JS = """
+const C = window.CFG;
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function fmt(v, kind, dec, signed){
+  dec = (dec==null)?2:dec; v = Number(v);
+  if(kind==='pct'){ return (signed&&v>=0?'+':'')+v.toFixed(dec)+'%'; }
+  if(kind==='inr'){ return '₹'+new Intl.NumberFormat('en-IN',{maximumFractionDigits:dec}).format(v); }
+  if(kind==='compact'){ return '₹'+new Intl.NumberFormat('en-IN',{notation:'compact',maximumFractionDigits:dec}).format(v); }
+  return new Intl.NumberFormat('en-IN',{notation:'compact',maximumFractionDigits:dec}).format(v);
+}
+const grid = document.getElementById('bento');
+const hero = document.createElement('div'); hero.className='cell hero';
+hero.innerHTML = '<div class="lab">'+C.hero.label+'</div>'+
+  '<div class="big"><span id="heroVal">0</span></div>'+
+  '<div class="delta" id="heroDelta"></div>'+
+  '<svg class="spark" viewBox="0 0 100 30" preserveAspectRatio="none"><path id="sparkPath" fill="none" stroke-linejoin="round"/></svg>';
+grid.appendChild(hero);
+const sig = document.createElement('div'); sig.className='cell sig';
+sig.innerHTML = '<div class="lab">Signal</div><div class="badge '+C.signal.kind+'">'+C.signal.text+'</div>';
+grid.appendChild(sig);
+C.kpis.forEach(function(k,i){ const d=document.createElement('div'); d.className='cell kpi'; d.style.gridArea='k'+(i+1);
+  d.innerHTML='<div class="lab" title="'+(k.tip||'')+'">'+k.label+'</div><div class="val"><span id="kv'+i+'">0</span></div>';
+  grid.appendChild(d); });
+// delta text
+if(C.hero.delta!=null){ const de=document.getElementById('heroDelta'); const up=C.hero.delta>=0;
+  de.textContent=(up?'▲ +':'▼ ')+Math.abs(C.hero.delta).toFixed(2)+'%'; de.style.color=up?C.col.success:C.col.danger; }
+// sparkline path
+const sp=C.hero.spark; const path=document.getElementById('sparkPath');
+if(sp && sp.length>1){ const mn=Math.min.apply(null,sp), mx=Math.max.apply(null,sp), rng=(mx-mn)||1;
+  let d='M'; sp.forEach(function(v,i){ d+=(i*100/(sp.length-1)).toFixed(2)+' '+(28-((v-mn)/rng)*26).toFixed(2)+(i<sp.length-1?' L ':''); });
+  path.setAttribute('d',d); path.setAttribute('stroke', sp[sp.length-1]>=sp[0]?C.col.success:C.col.danger); path.setAttribute('stroke-width','1.8');
+} else if(path){ path.parentNode.style.display='none'; }
+function setFinals(){
+  document.getElementById('heroVal').textContent=fmt(C.hero.value,C.hero.fmt,C.hero.decimals,false);
+  C.kpis.forEach(function(k,i){ document.getElementById('kv'+i).textContent=fmt(k.value,k.fmt,k.decimals,k.signed); });
+  document.querySelectorAll('.cell').forEach(function(c){c.style.opacity=1;});
+  if(path&&path.getTotalLength){ path.style.strokeDasharray='none'; }
+}
+function animate(){
+  document.querySelectorAll('.cell').forEach(function(c){c.style.opacity=0;});
+  anime({targets:'.cell', translateY:[18,0], opacity:[0,1], delay:anime.stagger(80), duration:600, easing:'easeOutCubic'});
+  function countUp(id,target,kind,dec,signed){ const el=document.getElementById(id); const o={v:0};
+    anime({targets:o, v:target, duration:1500, easing:'easeOutExpo', update:function(){ el.textContent=fmt(o.v,kind,dec,signed); }}); }
+  countUp('heroVal',C.hero.value,C.hero.fmt,C.hero.decimals,false);
+  C.kpis.forEach(function(k,i){ countUp('kv'+i,k.value,k.fmt,k.decimals,k.signed); });
+  if(path&&path.getTotalLength){ const len=path.getTotalLength(); path.style.strokeDasharray=len; path.style.strokeDashoffset=len;
+    anime({targets:path, strokeDashoffset:[len,0], duration:1400, easing:'easeInOutSine', delay:300}); }
+}
+if(reduce || typeof anime==='undefined'){ setFinals(); } else { animate(); }
+"""
+
+
+def _signal_kind(signal: str) -> str:
+    s = (signal or "").lower()
+    if "buy" in s:
+        return "buy"
+    if "sell" in s:
+        return "sell"
+    if "edge" in s or s in ("", "n/a"):
+        return "none"
+    return "hold"
+
+
+def animated_bento(dark: bool, hero: Dict[str, Any], kpis: List[Dict[str, Any]],
+                   signal: Dict[str, str], height: int = 250) -> None:
+    """Animated bento grid (hero + KPI cells + signal badge) rendered via anime.js.
+
+    hero: {label, value, fmt('inr'|'compact'|'num'), decimals, delta(%|None), spark([...]|None)}
+    kpis: up to 4 dicts {label, value, fmt('pct'|'num'|'inr'|'compact'), decimals, signed, tip}
+    signal: {text, kind('buy'|'sell'|'hold'|'none')}
+    """
+    t = tokens(dark)
+    payload = {
+        "hero": hero,
+        "kpis": kpis[:4],
+        "signal": signal,
+        "col": {"success": t["success"], "danger": t["danger"]},
+    }
+    root = (":root{"
+            f"--text:{t['text']};--muted:{t['muted']};--surface:{t['surface']};"
+            f"--border:{t['border']};--shadow:{t['shadow']};--accent:{t['accent']};"
+            f"--success:{t['success']};--danger:{t['danger']};" "}")
+    head = ("<style>@import url('https://fonts.googleapis.com/css2?"
+            "family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@600;700&display=swap');"
+            + root + _BENTO_CSS + "</style>")
+    body = ('<div id="bento" class="bento"></div>'
+            f"<script>window.CFG={json.dumps(payload)};</script>"
+            f'<script src="{_ANIME_CDN}"></script>'
+            f"<script>{_BENTO_JS}</script>")
+    components.html("<!doctype html><html><head>" + head + "</head><body>" + body + "</body></html>",
+                    height=height, scrolling=False)
+
+
+def signal_badge(signal: str, dark: bool, height: int = 64) -> None:
+    """A standalone pulsing signal badge (anime.js / CSS), colour-coded by signal."""
+    t = tokens(dark)
+    kind = _signal_kind(signal)
+    color = {"buy": t["success"], "sell": t["danger"]}.get(kind, t["muted"])
+    css = ("*{box-sizing:border-box}body{margin:0;background:transparent;"
+           "font-family:'Inter',system-ui,sans-serif;display:flex;align-items:center;}"
+           ".b{padding:6px 16px;border-radius:999px;font-weight:700;border:1.5px solid " + color
+           + ";color:" + color + ";opacity:0;}"
+           "@keyframes pz{0%{box-shadow:0 0 0 0 " + color + "55}70%{box-shadow:0 0 0 12px " + color
+           + "00}100%{box-shadow:0 0 0 0 " + color + "00}}"
+           "@media (prefers-reduced-motion: reduce){.b{animation:none!important;opacity:1!important}}")
+    js = ("var b=document.querySelector('.b');var r=window.matchMedia('(prefers-reduced-motion: reduce)').matches;"
+          "if(r||typeof anime==='undefined'){b.style.opacity=1;}else{"
+          "anime({targets:b,opacity:[0,1],scale:[0.9,1],duration:500,easing:'easeOutBack'});"
+          "b.style.animation='pz 1.9s infinite';}")
+    html_doc = ("<!doctype html><html><head><style>" + css + "</style></head><body>"
+                f'<span class="b">{html.escape(signal)}</span>'
+                f'<script src="{_ANIME_CDN}"></script><script>{js}</script></body></html>')
+    components.html(html_doc, height=height, scrolling=False)
+
+
+def kpi_card(label: str, value: str, help: Optional[str] = None) -> None:
+    """Native metric KPI with a glossary tooltip on the label (non-animated contexts)."""
+    st.metric(label, value, help=help or glossary.get_definition(label))
+
+
+def bento_columns(weights: List[int]):
+    """Structural helper: columns whose bordered containers become glass bento cells."""
+    return st.columns(weights, gap="medium")
 
 
 # --------------------------------------------------------------------------- #
