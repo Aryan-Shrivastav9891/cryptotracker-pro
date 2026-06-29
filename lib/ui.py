@@ -71,6 +71,8 @@ def apply_theme(dark: bool) -> None:
     /* --- Glossary hover tooltips (work in both light & dark) --- */
     .gloss {
         border-bottom: 1px dotted #7c3aed;
+        background-color: rgba(124, 58, 237, 0.12);  /* subtle highlight -> discoverable + AA contrast in both themes */
+        border-radius: 3px; padding: 0 2px;
         cursor: help;
         position: relative;
     }
