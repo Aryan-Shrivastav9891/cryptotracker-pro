@@ -4,11 +4,13 @@ CoinCard, Footer) into reusable Streamlit helpers.
 """
 from __future__ import annotations
 
+import html
+import re
 from typing import Any, Dict, List
 
 import streamlit as st
 
-from lib import model
+from lib import glossary, model
 from lib.formatting import (
     change_color,
     format_inr,
@@ -65,9 +67,90 @@ def apply_theme(dark: bool) -> None:
     .ctp-card { border-radius: 0.85rem; padding: 1rem 1.15rem; }
     .ctp-badge { padding: 2px 10px; border-radius: 999px; font-size: 0.8rem; font-weight: 600; }
     .ctp-pill { padding: 2px 8px; border-radius: 999px; font-size: 0.72rem; }
+
+    /* --- Glossary hover tooltips (work in both light & dark) --- */
+    .gloss {
+        border-bottom: 1px dotted #7c3aed;
+        cursor: help;
+        position: relative;
+    }
+    .gloss::after {
+        content: attr(data-tip);
+        position: absolute; left: 50%; bottom: 150%; transform: translateX(-50%);
+        width: 240px; max-width: 80vw; white-space: normal; text-align: left;
+        background: #1f2937; color: #f9fafb;
+        border: 1px solid #7c3aed; border-radius: 8px;
+        padding: 8px 10px; font-size: 0.78rem; font-weight: 400; line-height: 1.35;
+        box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+        opacity: 0; visibility: hidden; transition: opacity .15s ease;
+        z-index: 9999; pointer-events: none;
+    }
+    .gloss::before {
+        content: ""; position: absolute; left: 50%; bottom: 150%;
+        transform: translate(-50%, 100%);
+        border: 6px solid transparent; border-top-color: #7c3aed;
+        opacity: 0; visibility: hidden; transition: opacity .15s ease; z-index: 9999;
+    }
+    .gloss:hover::after, .gloss:hover::before { opacity: 1; visibility: visible; }
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
+
+
+# --------------------------------------------------------------------------- #
+# Glossary tooltips (inline hover help for jargon)
+# --------------------------------------------------------------------------- #
+_terms_sorted = sorted(glossary.terms(), key=len, reverse=True)
+_GLOSS_PATTERN = (
+    re.compile(r"(?<![\w])(" + "|".join(re.escape(t) for t in _terms_sorted) + r")s?(?![\w])",
+               re.IGNORECASE)
+    if _terms_sorted else None
+)
+
+
+def term(label: str, definition: str = None) -> str:
+    """Return an HTML span that shows ``definition`` on hover (with native title fallback).
+
+    If ``definition`` is omitted it's looked up in the glossary. Unknown terms are
+    returned as plain (escaped) text. Render with st.markdown(..., unsafe_allow_html=True).
+    """
+    if definition is None:
+        definition = glossary.get_definition(label)
+    lab = html.escape(str(label))
+    if not definition:
+        return lab
+    tip = html.escape(definition, quote=True)
+    return f'<span class="gloss" data-tip="{tip}" title="{tip}">{lab}</span>'
+
+
+def _wrap_match(match: "re.Match", used: set) -> str:
+    matched = match.group(0)
+    definition = glossary.get_definition(matched)
+    if not definition:
+        return matched
+    key = glossary.normalize(matched).rstrip("s")
+    if key in used:  # only the first occurrence of each term per text block
+        return matched
+    used.add(key)
+    return term(matched, definition)
+
+
+def annotate(text: str) -> str:
+    """Auto-wrap the first occurrence of each known glossary term in a hover tooltip.
+
+    Skips text inside `backtick code spans`, never double-wraps, and matches
+    whole words case-insensitively. Render with st.markdown(..., unsafe_allow_html=True).
+    """
+    if not text or _GLOSS_PATTERN is None:
+        return text
+    used: set = set()
+    out: List[str] = []
+    for part in re.split(r"(`[^`]*`)", str(text)):  # keep code spans verbatim
+        if part[:1] == "`":
+            out.append(part)
+        else:
+            out.append(_GLOSS_PATTERN.sub(lambda m: _wrap_match(m, used), part))
+    return "".join(out)
 
 
 # --------------------------------------------------------------------------- #

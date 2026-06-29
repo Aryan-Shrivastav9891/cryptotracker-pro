@@ -5,7 +5,7 @@ prices, all-time highs/lows, community + developer stats, links and description.
 """
 import streamlit as st
 
-from lib import charts, coingecko
+from lib import charts, coingecko, glossary, ui
 from lib.formatting import (
     format_date,
     format_inr,
@@ -99,15 +99,18 @@ else:
 st.markdown("### 💹 Market Data")
 c1, c2, c3 = st.columns(3)
 with c1:
-    st.metric("Market Cap (INR)", format_inr_compact(dget(md, "market_cap", "inr")))
+    st.metric("Market Cap (INR)", format_inr_compact(dget(md, "market_cap", "inr")),
+              help=glossary.get_definition("Market cap"))
     st.caption(f"$ {human_format(dget(md, 'market_cap', 'usd'))}")
     mc_chg = safe_float(md.get("market_cap_change_percentage_24h"))
     st.caption(f"{format_pct(mc_chg, signed=True)} (24h)")
 with c2:
-    st.metric("24h Volume (INR)", format_inr_compact(dget(md, "total_volume", "inr")))
+    st.metric("24h Volume (INR)", format_inr_compact(dget(md, "total_volume", "inr")),
+              help=glossary.get_definition("Volume (24h)"))
     st.caption(f"$ {human_format(dget(md, 'total_volume', 'usd'))}")
 with c3:
-    st.metric("Circulating Supply", human_format(md.get("circulating_supply")))
+    st.metric("Circulating Supply", human_format(md.get("circulating_supply")),
+              help=glossary.get_definition("Circulating supply"))
     st.caption(f"Total: {human_format(md.get('total_supply'))}")
     st.caption(f"Max: {human_format(md.get('max_supply')) if md.get('max_supply') else 'Unlimited'}")
 
@@ -127,6 +130,8 @@ with p1:
     )
 with p2:
     st.markdown("#### 🏔️ All-Time Stats")
+    st.markdown(ui.annotate("ATH = all-time high · ATL = all-time low (hover for more)."),
+                unsafe_allow_html=True)
     ath = dget(md, "ath", "inr")
     atl = dget(md, "atl", "inr")
     ath_date = format_date(dget(md, "ath_date", "inr"))

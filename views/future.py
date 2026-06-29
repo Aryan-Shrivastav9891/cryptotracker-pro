@@ -7,7 +7,7 @@ Bentobox layout: combined chart, per-horizon table, news + sentiment, plain-Engl
 import pandas as pd
 import streamlit as st
 
-from lib import charts, coingecko, forecast, news, ui
+from lib import charts, coingecko, forecast, glossary, news, ui
 from lib.formatting import format_inr
 
 dark = st.session_state.get("dark_mode", False)
@@ -81,8 +81,8 @@ current = result["current_price"]
 left, right = st.columns([2, 1])
 with left:
     with st.container(border=True):
-        st.markdown('<p class="bento-h">🔮 Forecast — 1D / 4D / 1W / 1M (with 80% bands)</p>',
-                    unsafe_allow_html=True)
+        st.markdown('<p class="bento-h">🔮 Forecast — 1D / 4D / 1W / 1M (with 80% '
+                    + ui.annotate("confidence band") + ")</p>", unsafe_allow_html=True)
         fig = charts.multi_forecast_chart(result["history_dates"], result["history_prices"],
                                           horizons, dark=dark, height=420)
         st.plotly_chart(fig, use_container_width=True, key=f"mfc_{coin_id}_{days}")
@@ -116,11 +116,25 @@ with st.container(border=True):
             "Exp. move": f"{hd['predicted_change']:+.2f}%",
             "MAPE": f"{hd['mape']*100:.1f}%" if hd["mape"] is not None else "N/A",
             "Directional": f"{hd['directional']*100:.0f}%" if hd["directional"] is not None else "N/A",
+            "MAE": format_inr(hd["mae"]) if hd["mae"] is not None else "N/A",
+            "RMSE": format_inr(hd["rmse"]) if hd["rmse"] is not None else "N/A",
             "Skill vs naive": f"{hd['skill']*100:+.0f}%" if hd["skill"] is not None else "N/A",
             "Reliable": "✅" if hd["reliable"] else "⚠️ no edge",
             "Signal": disp_sig,
         })
-    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    # Native column-header tooltips (the cleanest hover for tabular metrics).
+    st.dataframe(
+        pd.DataFrame(rows), width="stretch", hide_index=True,
+        column_config={
+            "MAPE": st.column_config.TextColumn("MAPE", help=glossary.get_definition("MAPE")),
+            "Directional": st.column_config.TextColumn(
+                "Directional", help=glossary.get_definition("Directional accuracy")),
+            "MAE": st.column_config.TextColumn("MAE", help=glossary.get_definition("MAE")),
+            "RMSE": st.column_config.TextColumn("RMSE", help=glossary.get_definition("RMSE")),
+            "Skill vs naive": st.column_config.TextColumn(
+                "Skill vs naive", help=glossary.get_definition("Skill score")),
+        },
+    )
     if sent["available"] and any(h["reliable"] for h in horizons):
         st.caption(f"Signals for reliable horizons include a soft tilt from {sent['label'].lower()} news.")
 
@@ -143,16 +157,25 @@ with a:
             st.caption(f"No recent news for {name}. (Add a free API key for more — see HOW_TO_RUN.md.)")
 with b:
     with st.container(border=True):
-        st.markdown('<p class="bento-h">📖 What these numbers mean</p>', unsafe_allow_html=True)
-        st.markdown(
-            "- **MAPE** = average % the forecast was off, on **unseen** data (lower is better).\n"
-            "- **Directional** = how often it got tomorrow's up/down right (50% = a coin flip).\n"
-            "- **Skill vs naive** = % less error than a random-walk baseline; **>0 means it has an edge**.\n"
-            "- **Longer horizons (1W, 1M) are far less reliable** — error grows fast; expect ⚠️ often.\n"
-            "- A horizon only shows Buy/Sell when it's reliable **and** the expected move beats its own error."
+        st.markdown('<p class="bento-h">📖 What these numbers mean (hover terms)</p>',
+                    unsafe_allow_html=True)
+        explainer = (
+            "- **MAPE** = average % the forecast was off, on unseen data (lower is better).\n"
+            "- **Directional accuracy** = how often it got tomorrow's up/down right (50% = a coin flip).\n"
+            "- **Skill score** = % less error than a naive baseline; **>0 means it has an edge**.\n"
+            "- The **Confidence band** shows the likely range; longer horizons (1W, 1M) are far less reliable.\n"
+            "- A horizon shows Buy/Sell only when it's reliable **and** the expected move beats its own error."
         )
-        st.caption("Daily crypto is close to a random walk; no model reliably beats the market. "
-                   "⚠️ Educational only — not financial advice.")
+        st.markdown(ui.annotate(explainer), unsafe_allow_html=True)
+        st.markdown(ui.annotate("Model features include RSI, MACD, Bollinger Bands, SMA, EMA, "
+                                "Volatility and Drift."), unsafe_allow_html=True)
+        st.markdown(
+            "<span class='ctp-muted' style='font-size:0.85rem'>"
+            + ui.annotate("Daily crypto is close to a Random walk; no model reliably beats the "
+                          "market. ⚠️ Educational only — not financial advice.")
+            + "</span>",
+            unsafe_allow_html=True,
+        )
 
 cols = st.columns(2)
 if cols[0].button("📄 Full coin details →", width="stretch"):
