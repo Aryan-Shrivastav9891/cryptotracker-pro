@@ -49,6 +49,11 @@ def compute_features(prices: np.ndarray) -> pd.DataFrame:
     out["boll_z"] = (s - sma20) / std20.replace(0, np.nan)
     out["vol10"] = ret.rolling(10).std()
     out["vol20"] = ret.rolling(20).std()
+
+    # MA slopes (trend strength) + a trend-vs-range regime flag — all causal.
+    out["sma10_slope"] = s.rolling(10).mean().diff() / s
+    out["sma20_slope"] = s.rolling(20).mean().diff() / s
+    out["regime"] = (out["sma20_slope"].abs() / out["vol20"].replace(0, np.nan)).clip(0, 5)
     return out
 
 

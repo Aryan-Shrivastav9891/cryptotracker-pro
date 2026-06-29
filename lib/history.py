@@ -7,6 +7,7 @@ pair doesn't exist, or Binance is geo-blocked, it falls back to CoinGecko's
 """
 from __future__ import annotations
 
+import time
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
@@ -68,6 +69,10 @@ def get_daily_closes(
         except Exception:
             pass  # geo-block / network / unknown pair -> fall back
 
+    return _coingecko_daily_fallback(coin_id, days)
+
+
+def _coingecko_daily_fallback(coin_id: str, days: int) -> Tuple[List[datetime], List[float], str]:
     # 2) Fall back to CoinGecko market_chart (caps ~365 days).
     capped = min(int(days), 365)
     raw = coingecko.get_market_chart(coin_id, days=capped)
@@ -78,4 +83,66 @@ def get_daily_closes(
         label = "CoinGecko (365d max)" if int(days) > 365 else "CoinGecko"
         return dates, closes, label
 
+    return [], [], "none"
+
+
+# --------------------------------------------------------------------------- #
+# Intraday (hourly) — for the Intraday Signal Lab
+# --------------------------------------------------------------------------- #
+def _ccxt_hourly(symbol: str, hours: int) -> Optional[Tuple[List[datetime], np.ndarray]]:
+    ex = _exchange()
+    if ex is None:
+        return None
+    pair = f"{symbol.upper()}/USDT"
+    ex.load_markets()
+    if pair not in ex.markets:
+        return None
+    now = ex.milliseconds()
+    cur = now - int((hours + 2) * 3600 * 1000)
+    rows: List[list] = []
+    for _ in range(40):  # pagination guard (40 * 1000 candles is plenty)
+        batch = ex.fetch_ohlcv(pair, timeframe="1h", since=cur, limit=1000)
+        if not batch:
+            break
+        rows.extend(batch)
+        nxt = batch[-1][0] + 3600 * 1000
+        if nxt <= cur:
+            break
+        cur = nxt
+        if len(batch) < 1000:
+            break
+        time.sleep(max(ex.rateLimit / 1000.0, 0.1))  # rate-limit-safe
+    if not rows:
+        return None
+    seen, dedup = set(), []
+    for c in rows:
+        if c[0] not in seen:
+            seen.add(c[0])
+            dedup.append(c)
+    dedup.sort(key=lambda c: c[0])
+    dates = [datetime.fromtimestamp(c[0] / 1000, tz=timezone.utc) for c in dedup]
+    closes = np.asarray([c[4] for c in dedup], dtype=float)
+    return dates, closes
+
+
+@st.cache_data(ttl=1800, show_spinner=False)
+def get_hourly_closes(
+    coin_id: str, symbol: str, hours: int = 720
+) -> Tuple[List[datetime], List[float], str]:
+    """Hourly closes (Binance via ccxt, else CoinGecko hourly). Cached 30 min."""
+    if HAS_CCXT and symbol:
+        try:
+            res = _ccxt_hourly(symbol, hours)
+            if res is not None and len(res[1]) >= 120:
+                dates, closes = res
+                return dates[-hours:], [float(x) for x in closes[-hours:]], "Binance (ccxt)"
+        except Exception:
+            pass
+    # CoinGecko returns hourly granularity for 2–90 day windows.
+    days = max(2, min(90, int(np.ceil(hours / 24)) + 1))
+    raw = coingecko.get_market_chart(coin_id, days=days)
+    if raw:
+        dates = [datetime.fromtimestamp(ts / 1000, tz=timezone.utc) for ts, _ in raw][-hours:]
+        closes = [float(p) for _, p in raw][-hours:]
+        return dates, closes, "CoinGecko (hourly)"
     return [], [], "none"

@@ -29,6 +29,7 @@ pages = {
     "AI": [
         st.Page("views/predicted.py", title="AI Predicted", icon=":material/trending_up:"),
         st.Page("views/future.py", title="Future Gains", icon=":material/schedule:"),
+        st.Page("views/intraday.py", title="Intraday Signal Lab", icon=":material/bolt:"),
     ],
     "Explore": [
         st.Page("views/coin_details.py", title="Coin Details", icon=":material/info:"),
