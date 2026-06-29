@@ -33,6 +33,16 @@ GLOSSARY: Dict[str, str] = {
     "ATL": "All-Time Low - the lowest price the coin has ever reached.",
     "Liquidity": "How easily you can buy/sell without moving the price much.",
     "OHLCV": "Open, High, Low, Close, Volume - the standard candle data for each time period.",
+    "Stop-loss": "A preset exit price that caps your loss if the trade goes against you.",
+    "Take-profit": "A preset exit price where you lock in gains if the trade goes your way.",
+    "Expectancy": "Average profit or loss per trade over many trades, after costs.",
+    "Meta-label probability": "A second model's estimate of the chance your entry actually hits take-profit before stop-loss.",
+    "ATR": "Average True Range - how much the price typically moves per bar.",
+    "Triple-barrier": "Labels a trade by what comes first: take-profit, stop-loss, or a time limit.",
+    "Kelly": "A formula for bet size that maximizes long-run growth; use a small fraction of it to cut risk.",
+    "Breakout": "Price pushing past a recent high/low, often continuing in that direction.",
+    "Dip-buy": "Buying after a pullback toward support, expecting a bounce (range markets).",
+    "Regime": "Whether the market is currently trending or range-bound (chopping sideways).",
 }
 
 

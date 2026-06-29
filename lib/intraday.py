@@ -16,7 +16,7 @@ import numpy as np
 import streamlit as st
 
 from lib import forecast as F
-from lib import history
+from lib import history, playbook
 
 # Liquid coins (symbol -> CoinGecko id). Editable in the UI.
 WATCHLIST: Dict[str, str] = {
@@ -220,11 +220,13 @@ def scan_coin(symbol: str, coin_id: str, hours: int, costs_tuple: Tuple[float, f
     if "naive" not in final_fc:
         final_fc["naive"] = F._naive(prices, max(HORIZONS.values()))
 
-    results = {}
+    results, playbooks = {}, {}
     for label, h in HORIZONS.items():
         results[label] = _eval_intra(model_fc, origins, anchors, prices, names, final_fc, h, costs)
+        playbooks[label] = playbook.build_playbook(prices, h, costs)
     return {"symbol": symbol, "coin_id": coin_id, "source": source, "n_history": n,
-            "current_price": float(prices[-1]), "models_available": names, "results": results}
+            "current_price": float(prices[-1]), "models_available": names,
+            "results": results, "playbooks": playbooks}
 
 
 def leverage_math(leverage: float, maint_margin: float = 0.005) -> Dict[str, float]:

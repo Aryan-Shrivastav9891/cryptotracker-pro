@@ -9,7 +9,7 @@ Accuracy only — not financial advice.
 import pandas as pd
 import streamlit as st
 
-from lib import glossary, intraday, ui
+from lib import glossary, intraday, playbook, ui
 from lib.intraday import WATCHLIST
 
 dark = st.session_state.get("dark_mode", False)
@@ -22,10 +22,11 @@ st.caption("Scan liquid coins on **1h / 2h** horizons with every installed algor
 # --- PERMANENT leverage risk panel ------------------------------------------
 with st.container(border=True):
     st.markdown("### 🛑 Leverage & risk")
-    lc = st.columns([1, 2])
+    lc = st.columns([1, 1, 1])
     leverage = lc[0].slider("Leverage (×)", 1, 25, 4)
+    capital = lc[1].number_input("Account size (₹)", 1000, 100_000_000, 100_000, step=1000)
     lm = intraday.leverage_math(leverage)
-    lc[1].metric("Liquidation distance", f"≈ {lm['liq_move_pct']:.1f}% move against you")
+    lc[2].metric("Liquidation distance", f"≈ {lm['liq_move_pct']:.1f}%")
     st.warning(
         f"At **{leverage}×**, a move of only **~{lm['liq_move_pct']:.1f}%** against your position "
         f"can liquidate the whole thing (even less after fees + maintenance margin). "
@@ -117,6 +118,56 @@ _COLS = {"Directional": "Directional accuracy", "Skill": "Skill score",
          "Max DD": "Volatility"}
 
 
+def _fmt_px(x):
+    if x is None:
+        return "—"
+    ax = abs(x)
+    return f"{x:,.0f}" if ax >= 100 else (f"{x:,.2f}" if ax >= 1 else f"{x:,.6f}")
+
+
+def render_playbook_card(symbol, pb, capital):
+    with st.container(border=True):
+        if not pb or not pb.get("available"):
+            st.markdown(f"**{symbol}** — _playbook unavailable_")
+            return
+        regime = pb["regime"]
+        reg_color = "#22c55e" if regime == "Trend" else "#3b82f6"
+        st.markdown(
+            f"**{symbol}** &nbsp; <span class='ctp-badge' style='background:{reg_color}22;"
+            f"color:{reg_color}'>{ui.term('Regime')}: {regime}</span>", unsafe_allow_html=True)
+        style = pb.get("style")
+        if style in (None, "No-trade"):
+            st.markdown("<span class='ctp-badge' style='background:#9ca3af22;color:#9ca3af'>"
+                        "⚪ No-trade</span>", unsafe_allow_html=True)
+            st.caption(pb.get("reason", ""))
+            return
+        if pb.get("skip_low_conf"):
+            st.markdown("<span class='ctp-badge' style='background:#eab30822;color:#ca8a04'>"
+                        "⏸ Skip — below confidence threshold</span>", unsafe_allow_html=True)
+        sidec = "#16a34a" if pb["side"] == "Long" else "#ef4444"
+        styled = ui.term(pb["style"]) if pb["style"] in ("Breakout",) else pb["style"]
+        st.markdown(f"<span class='ctp-badge' style='background:{sidec}22;color:{sidec}'>"
+                    f"{styled} · {pb['side']}</span>", unsafe_allow_html=True)
+        st.caption(f"Suggested: {pb['entry_text']}.")
+        st.markdown(
+            f"- Entry ≈ **${_fmt_px(pb['entry_zone'])}** · "
+            f"{ui.term('Stop-loss')} **${_fmt_px(pb['stop'])}** ({pb['sl_pct']*100:.1f}%) · "
+            f"{ui.term('Take-profit')} **${_fmt_px(pb['target'])}** ({pb['tp_pct']*100:.1f}%)",
+            unsafe_allow_html=True)
+        prob, wr, exp = pb.get("probability"), pb.get("win_rate"), pb.get("expectancy")
+        st.markdown(
+            f"- {ui.term('Meta-label probability')} "
+            f"**{round(prob*100) if prob is not None else '—'}%** · win-rate "
+            f"**{round(wr*100) if wr is not None else '—'}%** · "
+            f"{ui.term('Expectancy')} **{exp*100:+.2f}%/trade** (net, OOS, n={pb.get('n_test')})",
+            unsafe_allow_html=True)
+        sz = playbook.position_sizing(pb["sl_pct"], wr, prob, capital)
+        st.caption(
+            f"Illustrative size: risk if {ui.term('Stop-loss')} hits ≈ ₹{sz['rupee_risk']:,.0f} "
+            f"({sz['risk_fraction_pct']:.1f}% of account) · cap ≤ {sz['frac_kelly_pct']:.1f}% of "
+            f"account ({ui.term('Kelly')} ¼-cap). Not advice.", unsafe_allow_html=True)
+
+
 def show_horizon(label):
     df = build_table(label)
     tradeable_n = sum(1 for r in scanned if (r["results"].get(label) or {}).get("tradeable"))
@@ -132,6 +183,22 @@ def show_horizon(label):
         column_config={col: st.column_config.TextColumn(col, help=glossary.get_definition(term))
                        for col, term in _COLS.items()},
     )
+
+    # --- Entry Playbook (regime-driven dip vs breakout; only shown when it has edge) ---
+    st.markdown(f"##### 🎯 Entry Playbook · {label}")
+    st.markdown(ui.annotate(
+        "Dip-buy = buying after price pulls back toward support, expecting a bounce — works in "
+        "Range markets, dangerous in downtrends. Breakout = buying as price pushes past a recent "
+        "high, expecting continuation — works in Trend markets, prone to false breakouts in chop. "
+        "The card surfaces a style ONLY if it beat a cost-aware naive baseline out-of-sample for "
+        "that coin; otherwise No-trade."), unsafe_allow_html=True)
+    st.caption(f"⚠️ Illustrative levels from a backtest — NOT a recommendation to trade. Backtested "
+               f"edge does not guarantee future results; intraday crypto is dominated by noise. "
+               f"At {leverage}×, a ~{lm['liq_move_pct']:.0f}% adverse move (less after fees) can liquidate.")
+    pcols = st.columns(2)
+    for i, r in enumerate(scanned):
+        with pcols[i % 2]:
+            render_playbook_card(r["symbol"], r.get("playbooks", {}).get(label), capital)
 
 
 t1, t2 = st.tabs(["⏱️ 1h horizon", "⏱️ 2h horizon"])
