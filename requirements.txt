@@ -15,3 +15,6 @@ ccxt>=4.0                # Binance daily OHLCV (key-less) for forecasting histor
                          # falls back to CoinGecko when unavailable
 vaderSentiment>=3.3      # news headline sentiment (falls back to "Neutral")
 feedparser>=6.0          # keyless RSS news fallback (works with no API key)
+
+# Optional (Live Paper-Trading Lab): activates only if installed, degrades silently:
+# river>=0.21            # ADWIN concept-drift detection (else a rolling-error detector is used)
