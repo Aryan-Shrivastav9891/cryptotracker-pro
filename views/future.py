@@ -81,6 +81,35 @@ with st.status(f"Training the multi-model ensemble for {name}…", expanded=True
 horizons = result["horizons"]
 current = result["current_price"]
 
+# --- Animated bento hero (anime.js): price + forecast KPIs + signal ----------
+_primary = next((h for h in horizons if h["reliable"]), horizons[0])
+_dec = 0 if current >= 100 else (2 if current >= 1 else 6)
+
+
+def _pctval(x):  # metric -> percentage number for count-up (0 if missing)
+    return float(x) * 100 if x is not None else 0.0
+
+
+ui.animated_bento(
+    dark,
+    hero={"label": f"{name} ({symbol}) · current price", "value": current, "fmt": "inr",
+          "decimals": _dec, "delta": _primary["predicted_change"],
+          "spark": result["history_prices"][-40:]},
+    kpis=[
+        {"label": "MAPE", "value": _pctval(_primary["mape"]), "fmt": "pct", "decimals": 1,
+         "tip": glossary.get_definition("MAPE")},
+        {"label": "Directional", "value": _pctval(_primary["directional"]), "fmt": "pct",
+         "decimals": 0, "tip": glossary.get_definition("Directional accuracy")},
+        {"label": "Skill vs naive", "value": _pctval(_primary["skill"]), "fmt": "pct",
+         "decimals": 0, "signed": True, "tip": glossary.get_definition("Skill score")},
+        {"label": "Coverage", "value": _pctval(_primary["coverage"]), "fmt": "pct",
+         "decimals": 0, "tip": glossary.get_definition("Confidence band")},
+    ],
+    signal={"text": f"{_primary['label']}: {_primary['signal']}",
+            "kind": ui._signal_kind(_primary["signal"])},
+    height=250,
+)
+
 # --- BENTO ROW 1: combined chart (wide) + sentiment (narrow) ----------------
 left, right = st.columns([2, 1])
 with left:
@@ -91,9 +120,6 @@ with left:
                                           horizons, dark=dark, height=420)
         st.plotly_chart(fig, use_container_width=True, key=f"mfc_{coin_id}_{days}")
 with right:
-    with st.container(border=True):
-        st.markdown('<p class="bento-h">Current price</p>', unsafe_allow_html=True)
-        st.markdown(f'<span class="bento-big">{format_inr(current)}</span>', unsafe_allow_html=True)
     with st.container(border=True):
         st.markdown('<p class="bento-h">📰 News sentiment</p>', unsafe_allow_html=True)
         if sent["available"]:
@@ -114,8 +140,9 @@ with st.container(border=True):
         # News sentiment applies only as a soft ±1-notch tilt, and only when reliable.
         disp_sig = (forecast.tilt_signal(hd["signal"], sent["label"])
                     if (sent["available"] and hd["reliable"]) else hd["signal"])
-        # Too few out-of-sample windows -> don't show noisy skill/coverage numbers.
-        low = hd["score_windows"] < forecast.MIN_SCORE
+        # Too few out-of-sample windows OR 2-fold (selection==test) -> metrics are noisy/
+        # optimistic, so don't present skill/coverage as trustworthy.
+        low = hd["score_windows"] < forecast.MIN_SCORE or hd.get("select_on_test", False)
         rows.append({
             "Horizon": hd["label"],
             "Predicted": format_inr(hd["predicted_price"]),
