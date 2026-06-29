@@ -102,6 +102,7 @@ def build_table(label):
             "Net move (cost-adj)": _pct(hd["expected_net"], signed=True),
             "Net/trade": _pct(hd["net_mean"], signed=True),
             "Net Sharpe": "—" if hd["sharpe"] is None else f"{hd['sharpe']:.2f}",
+            "Defl. Sharpe": "—" if hd.get("deflated_sharpe") is None else f"{hd['deflated_sharpe']:.2f}",
             "Max DD": _pct(hd["maxdd"]),
             "Coverage": _pct(hd["coverage"]),
             "Tradeable?": "✅ yes" if hd["tradeable"] else "no",
@@ -114,8 +115,8 @@ def build_table(label):
 
 
 _COLS = {"Directional": "Directional accuracy", "Skill": "Skill score",
-         "Net Sharpe": "Skill score", "Coverage": "Confidence band",
-         "Max DD": "Volatility"}
+         "Net Sharpe": "Skill score", "Defl. Sharpe": "Deflated Sharpe",
+         "Coverage": "Confidence band", "Max DD": "Volatility"}
 
 
 def _fmt_px(x):

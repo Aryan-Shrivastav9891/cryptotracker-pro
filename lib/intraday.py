@@ -93,7 +93,36 @@ def simulate_costs(sign: np.ndarray, anchor: np.ndarray, actual: np.ndarray,
     return {"n": int(mask.sum()), "net_mean": float(np.mean(net)), "hit_rate": float(np.mean(net > 0)),
             "avg_win": float(np.mean(wins)) if len(wins) else 0.0,
             "avg_loss": float(np.mean(losses)) if len(losses) else 0.0,
-            "maxdd": maxdd, "sharpe": sharpe, "cost_per_trade": float(cost)}
+            "maxdd": maxdd, "sharpe": sharpe, "cost_per_trade": float(cost),
+            "net_returns": [float(x) for x in net]}
+
+
+def deflated_sharpe(net: List[float], n_trials: int, hold_hours: float) -> Optional[float]:
+    """Annualised Sharpe with a multiple-testing haircut (Bailey/Lopez de Prado).
+
+    Subtracts the expected maximum Sharpe under the null across `n_trials` configs —
+    a great backtest from trying many models is probably luck, and this surfaces that.
+    """
+    x = np.asarray([v for v in net if np.isfinite(v)], dtype=float)
+    T = len(x)
+    if T < 8 or np.std(x) < 1e-12:
+        return None
+    try:
+        import math
+        from scipy.stats import skew, kurtosis, norm
+        sr = float(np.mean(x) / np.std(x))                       # per-trade Sharpe
+        sk = float(skew(x))
+        ku = float(kurtosis(x, fisher=False))
+        var_sr = max((1 - sk * sr + (ku - 1) / 4.0 * sr ** 2) / (T - 1), 1e-9)
+        sigma_sr = math.sqrt(var_sr)
+        N = max(int(n_trials), 1)
+        g = 0.5772156649  # Euler-Mascheroni
+        emax = (sigma_sr * ((1 - g) * norm.ppf(1 - 1.0 / N) + g * norm.ppf(1 - 1.0 / (N * math.e)))
+                if N > 1 else 0.0)
+        ann = math.sqrt((24.0 / hold_hours) * 365.0)
+        return float((sr - emax) * ann)
+    except Exception:
+        return None
 
 
 def _eval_intra(model_fc, origins, anchors, prices, names, final_fc, h, costs) -> Optional[Dict[str, Any]]:
@@ -174,10 +203,15 @@ def _eval_intra(model_fc, origins, anchors, prices, names, final_fc, h, costs) -
         and len(test_i) >= MIN_SCORE and skill is not None and skill > 0)
     signal = ("Long" if fwd_gross > 0 else "Short") if tradeable else "No-edge"
 
+    # Deflated Sharpe: haircut the net Sharpe for how many configs we tried.
+    n_trials = max(1, len(names) * 3)  # base models x 3 combiners
+    deflated = deflated_sharpe(net["net_returns"], n_trials, h) if (net and net.get("net_returns")) else None
+
     return {
         "horizon": h, "combiner": best, "models_used": [m for m in kept if m != "naive"] or ["naive"],
         "directional": tm["directional"], "mape": tm["mape"], "skill": skill,
         "net_mean": net["net_mean"] if net else None, "naive_net": naive_net["net_mean"] if naive_net else None,
+        "deflated_sharpe": deflated, "n_trials": n_trials,
         "hit_rate": net["hit_rate"] if net else None, "sharpe": net["sharpe"] if net else None,
         "maxdd": net["maxdd"] if net else None, "avg_win": net["avg_win"] if net else None,
         "avg_loss": net["avg_loss"] if net else None, "coverage": coverage,

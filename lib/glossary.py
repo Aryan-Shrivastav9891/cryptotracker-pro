@@ -43,6 +43,8 @@ GLOSSARY: Dict[str, str] = {
     "Breakout": "Price pushing past a recent high/low, often continuing in that direction.",
     "Dip-buy": "Buying after a pullback toward support, expecting a bounce (range markets).",
     "Regime": "Whether the market is currently trending or range-bound (chopping sideways).",
+    "Deflated Sharpe": "Sharpe ratio after a haircut for trying many models — guards against luck from multiple testing.",
+    "Brier": "Calibration error of probabilities (0 = perfect, 0.25 = no skill); lower is better.",
 }
 
 
