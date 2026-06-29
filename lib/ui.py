@@ -58,12 +58,11 @@ def tokens(dark: bool) -> Dict[str, str]:
     }
 
 
-_FONTS = ("<style>@import url('https://fonts.googleapis.com/css2?"
-          "family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');</style>")
+_FONT_IMPORT = ("@import url('https://fonts.googleapis.com/css2?"
+                "family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');")
 
 _STATIC_CSS = """
-/* Body font goes on .stApp and inherits — NEVER on generic `span` (that overrode
-   Streamlit's Material Symbols icon font and turned icon ligatures into raw text). */
+/* font on .stApp (inherited); not on generic spans, to keep Material icon ligatures */
 .stApp { background: var(--bg); transition: background .4s ease, color .4s ease;
     color: var(--text); font-family: 'Inter', system-ui, -apple-system, sans-serif; }
 .stApp p, .stApp li, .stApp label, .stApp td, .stApp th { color: var(--text); }
@@ -101,6 +100,8 @@ div[data-testid="stVerticalBlockBorderWrapper"]:hover {
 .ctp-card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.15rem; }
 .ctp-badge { padding: 2px 10px; border-radius: 999px; font-size: .8rem; font-weight: 600; }
 .ctp-pill { padding: 2px 8px; border-radius: 999px; font-size: .72rem; }
+.bento-h { font-size: .8rem; text-transform: uppercase; letter-spacing: .04em; opacity: .7; margin: 0; }
+.bento-big { font-size: 1.9rem; font-weight: 800; line-height: 1.1; margin: .1rem 0; }
 .gloss {
     border-bottom: 1px dotted var(--accent); background: rgba(124,58,237,.12);
     border-radius: 3px; padding: 0 2px; cursor: help; position: relative;
@@ -121,10 +122,13 @@ div[data-testid="stVerticalBlockBorderWrapper"]:hover {
 
 
 def apply_theme(dark: bool) -> None:
-    """Inject the full design system (tokens + glass cards + fonts) for the active theme.
+    """Inject ALL global CSS as ONE <style> block (single source of truth).
 
-    Emitted every rerun (cheap, idempotent by position) so the dark/light toggle
-    updates instantly; runtime-heavy animation lives in the anime.js components.
+    Emitted every rerun (Streamlit reconciles by element position, so it is NOT
+    duplicated) so the dark/light toggle updates instantly. Must be ONE <style>
+    tag at the start of the string: two concatenated <style> tags, or 4-space
+    indentation, make Streamlit's markdown render the CSS as visible text.
+    Theme-heavy animation lives only in the anime.js components.
     """
     t = tokens(dark)
     css_vars = (
@@ -135,9 +139,10 @@ def apply_theme(dark: bool) -> None:
         f"--shadow:{t['shadow']};--shadow-hover:{t['shadow_hover']};--radius:18px;"
         "}"
     )
+    # @import MUST come first in the stylesheet; one <style> tag, no leading whitespace.
     sidebar = f"[data-testid='stSidebar']{{background:{t['sidebar']};}}"
-    st.markdown(_FONTS + "<style>" + css_vars + _STATIC_CSS + sidebar + "</style>",
-                unsafe_allow_html=True)
+    css = _FONT_IMPORT + css_vars + _STATIC_CSS + sidebar
+    st.markdown("<style>" + css + "</style>", unsafe_allow_html=True)
 
 
 inject_theme = apply_theme  # alias per the design-system API

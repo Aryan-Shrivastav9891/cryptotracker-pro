@@ -12,18 +12,8 @@ from lib.formatting import format_inr
 
 dark = st.session_state.get("dark_mode", False)
 
-st.markdown(
-    """
-    <style>
-    div[data-testid="stVerticalBlockBorderWrapper"] {
-        border-radius: 18px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); height: 100%;
-    }
-    .bento-h { font-size:0.8rem; text-transform:uppercase; letter-spacing:.04em; opacity:.7; margin:0; }
-    .bento-big { font-size:1.9rem; font-weight:800; line-height:1.1; margin:.1rem 0; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Global CSS (incl. .bento-h / .bento-big) comes from lib/ui.apply_theme — single
+# source of truth, injected once per run in app.py. Do not emit CSS from pages.
 
 SIG_COLORS = {"Strong Buy": "#16a34a", "Buy": "#22c55e", "Hold": "#3b82f6",
               "Sell": "#f97316", "Strong Sell": "#ef4444"}
