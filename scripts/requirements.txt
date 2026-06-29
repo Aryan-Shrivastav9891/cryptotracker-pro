@@ -1,0 +1,6 @@
+# Dependencies for the data-pipeline scripts (separate from the Streamlit app).
+#   pip install -r scripts/requirements.txt
+ccxt>=4.0          # free, no-API-key public OHLCV from many exchanges
+pandas>=2.0
+numpy>=1.24
+scikit-learn>=1.3  # TimeSeriesSplit + StandardScaler for time_split.py

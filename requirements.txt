@@ -1,0 +1,12 @@
+# CryptoTracker Pro — Python (Streamlit) edition
+# Core stack (always required). Installs cleanly on Python 3.9+.
+streamlit>=1.40
+requests>=2.31
+pandas>=2.0
+numpy>=1.24
+plotly>=5.20
+
+# Time-series forecasting engine (Holt-Winters / ARIMA + confidence intervals)
+# used by the Future page's backtested forecasts. If absent, the app falls back
+# to a random-walk-with-drift baseline so it always runs.
+statsmodels>=0.14

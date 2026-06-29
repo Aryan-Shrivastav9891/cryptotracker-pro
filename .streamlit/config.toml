@@ -1,0 +1,19 @@
+# Streamlit theme + server config for CryptoTracker Pro.
+# Mirrors the original Tailwind palette (purple-600 -> blue-500 brand gradient,
+# gray-100 background, gray-800 text). Runtime dark mode is layered on top via
+# injected CSS (see lib/ui.py -> apply_theme).
+
+[theme]
+base = "light"
+primaryColor = "#7c3aed"            # purple-600
+backgroundColor = "#f3f4f6"         # gray-100
+secondaryBackgroundColor = "#ffffff"
+textColor = "#1f2937"               # gray-800
+font = "sans serif"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false
