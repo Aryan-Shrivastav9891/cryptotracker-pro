@@ -62,11 +62,17 @@ _FONTS = ("<style>@import url('https://fonts.googleapis.com/css2?"
           "family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap');</style>")
 
 _STATIC_CSS = """
-.stApp { background: var(--bg); transition: background .4s ease, color .4s ease; }
-.stApp, .stApp p, .stApp span, .stApp li, .stApp label {
-    color: var(--text); font-family: 'Inter', system-ui, -apple-system, sans-serif;
-}
+/* Body font goes on .stApp and inherits — NEVER on generic `span` (that overrode
+   Streamlit's Material Symbols icon font and turned icon ligatures into raw text). */
+.stApp { background: var(--bg); transition: background .4s ease, color .4s ease;
+    color: var(--text); font-family: 'Inter', system-ui, -apple-system, sans-serif; }
+.stApp p, .stApp li, .stApp label, .stApp td, .stApp th { color: var(--text); }
 h1, h2, h3, h4 { font-family: 'Space Grotesk', 'Inter', sans-serif; letter-spacing: -.01em; color: var(--text); }
+/* Re-assert the Material Symbols icon font AFTER our font rules so icons always win. */
+span[data-testid="stIconMaterial"], .material-symbols-rounded, .material-symbols-outlined,
+[class*="material-symbols"] {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
+}
 [data-testid="stMetricValue"] { font-family: 'Space Grotesk', 'Inter', sans-serif; color: var(--text); }
 [data-testid="stMetricLabel"] { color: var(--muted); }
 /* glassmorphism cards (Streamlit bordered containers) */
