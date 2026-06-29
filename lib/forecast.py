@@ -53,8 +53,11 @@ try:
 except Exception:  # pragma: no cover
     HAS_SKLEARN = False
 
-LOOKBACK = 60          # walk-forward one-step backtest length (days)
+HORIZONS = {"1D": 1, "4D": 4, "1W": 7, "1M": 30}  # label -> days ahead
+MAX_H = 30             # longest horizon (steps forecast at each backtest origin)
+BACKTEST_WINDOWS = 50  # walk-forward origins (each forecasts MAX_H steps)
 MIN_TRAIN = 60         # smallest training window (also GBR's minimum)
+MIN_SCORE = 5          # min out-of-sample windows required to call a horizon reliable
 MAX_PCT_ERROR = 5.0    # cap a single point's % error so tiny prices can't blow up MAPE
 RET_CLIP = 0.25        # clamp per-step predicted log-return to ±25%
 MC_SIMS = 2000         # Monte-Carlo simulations for the confidence band
@@ -234,25 +237,48 @@ def _build_models(initial_train: np.ndarray) -> List[Tuple[str, Callable[[np.nda
     return working
 
 
-def _walk_forward(prices: np.ndarray, models, lookback: int):
-    """Expanding-window, one-step-ahead, refit each step over the last `lookback` days."""
-    n = len(prices)
-    start = n - lookback
-    preds: Dict[str, List[float]] = {name: [] for name, _ in models}
-    actuals, prevs = [], []
-    for t in range(start, n):
-        train, actual, prev = prices[:t], float(prices[t]), float(prices[t - 1])
-        actuals.append(actual)
-        prevs.append(prev)
+def _walk_forward(prices: np.ndarray, models, origins: List[int], max_h: int) -> Dict[str, np.ndarray]:
+    """Expanding-window walk-forward: at each origin t, refit and forecast `max_h`
+    steps. Returns {model: array of shape (n_origins, max_h)} with NaN where a
+    model failed (so a failure is never scored as a perfect carry-forward)."""
+    model_fc: Dict[str, List[np.ndarray]] = {name: [] for name, _ in models}
+    for t in origins:
+        train = prices[:t]
         for name, fn in models:
             try:
-                p = float(fn(train, 1)[0])
+                fc = np.asarray(fn(train, max_h), dtype=float)
             except Exception:
-                p = np.nan  # NaN (not carry-forward) so a failed step isn't scored as perfect
-            if not np.isfinite(p) or p <= 0:
-                p = np.nan
-            preds[name].append(p)
-    return preds, np.asarray(actuals), np.asarray(prevs)
+                fc = np.full(max_h, np.nan)
+            fc = np.where(np.isfinite(fc) & (fc > 0), fc, np.nan)
+            model_fc[name].append(fc)
+    return {nm: np.asarray(v, dtype=float) for nm, v in model_fc.items()}
+
+
+def _fit_weights(preds_by_model: Dict[str, np.ndarray], actuals: np.ndarray,
+                 anchors: np.ndarray, kept: List[str]) -> Dict[str, float]:
+    """Weights = 1/MAPE (normalised) over the given (weight-fold) data."""
+    weights: Dict[str, float] = {}
+    for nm in kept:
+        m = _metrics(preds_by_model[nm], actuals, anchors)["mape"]
+        weights[nm] = (1.0 / max(m, 1e-4)) if (m and m > 0) else (1.0 if nm == "naive" else 0.0)
+    if sum(weights.values()) <= 0:
+        weights = {nm: (1.0 if nm == "naive" else 0.0) for nm in kept}
+    tot = sum(weights.values()) or 1.0
+    return {k: v / tot for k, v in weights.items()}
+
+
+def _ensemble_preds(preds_by_model: Dict[str, np.ndarray], weights: Dict[str, float],
+                    kept: List[str]) -> np.ndarray:
+    """Per-row weighted ensemble, renormalising over the models available that row."""
+    rows = len(next(iter(preds_by_model.values()))) if preds_by_model else 0
+    out = np.full(rows, np.nan)
+    for i in range(rows):
+        avail = [nm for nm in kept if np.isfinite(preds_by_model[nm][i]) and weights.get(nm, 0) > 0]
+        if not avail:
+            continue
+        wsum = sum(weights[nm] for nm in avail)
+        out[i] = sum(weights[nm] * preds_by_model[nm][i] for nm in avail) / wsum
+    return out
 
 
 # =========================================================================== #
@@ -297,17 +323,16 @@ def tilt_signal(signal: str, sentiment_label: str) -> str:
 # Public entry point
 # =========================================================================== #
 @st.cache_data(ttl=3600, show_spinner=False)
-def forecast_coin(
-    coin_id: str, symbol: str, days: int = 540, horizon: int = 7
-) -> Optional[Dict[str, Any]]:
-    """Backtest + ensemble forecast for one coin. Returns a result dict, or None
-    when there isn't enough history (~80 daily points) to backtest honestly.
+def forecast_coin(coin_id: str, symbol: str, days: int = 540) -> Optional[Dict[str, Any]]:
+    """Backtest + ensemble forecast for one coin across ALL horizons (1D/4D/1W/1M).
+
+    Returns a result dict (or None when there isn't enough history). Each horizon
+    is validated out-of-sample independently and flagged reliable/unreliable.
     """
-    horizon = int(max(1, min(horizon, 30)))
     dates, closes, source = history.get_daily_closes(coin_id, symbol, days=days)
     prices = np.asarray(closes, dtype=float)
 
-    # Drop any non-finite / non-positive points (rare bad data) and keep dates aligned.
+    # Drop any non-finite / non-positive points (rare bad data); keep dates aligned.
     if len(prices):
         good = np.isfinite(prices) & (prices > 0)
         if not good.all():
@@ -315,128 +340,144 @@ def forecast_coin(
             dates = [d for d, k in zip(dates, good) if k]
 
     n = len(prices)
-    if n < MIN_TRAIN + 20:
+    if n < MIN_TRAIN + 12:
         return None
 
-    lookback = min(LOOKBACK, n - MIN_TRAIN)
-    if lookback < 20:
+    windows = min(BACKTEST_WINDOWS, n - MIN_TRAIN)
+    if windows < 10:
         return None
+    origins = list(range(n - windows, n))
+    anchors = np.asarray([prices[t - 1] for t in origins], dtype=float)
 
-    initial_train = prices[: n - lookback]
+    initial_train = prices[: origins[0]]
     models = _build_models(initial_train)
     if not models:
         return None
     fns = dict(models)
+    names = [nm for nm, _ in models]
 
-    # ---- walk-forward backtest (one-step, refit each step) ----
-    preds, actuals, prevs = _walk_forward(prices, models, lookback)
-    steps = len(actuals)
-    half = max(1, steps // 2)
-    w_sl, s_sl = slice(0, half), slice(half, steps)  # weight-fit fold, score fold
+    # ---- one walk-forward producing MAX_H-step forecasts at every origin ----
+    model_fc = _walk_forward(prices, models, origins, MAX_H)
 
-    # Keep only models that produced a prediction on >=50% of the weight fold
-    # (naive is always kept). This drops models silently failing every step.
-    kept: List[str] = []
-    for name, _ in models:
-        arr = np.asarray(preds[name], dtype=float)[w_sl]
-        cov = float(np.isfinite(arr).mean()) if len(arr) else 0.0
-        if name == "naive" or cov >= 0.5:
-            kept.append(name)
-
-    # ---- weights = 1/MAPE, fit on the WEIGHT fold (out-of-sample wrt the score fold) ----
-    weights: Dict[str, float] = {}
-    for name in kept:
-        m = _metrics(np.asarray(preds[name])[w_sl], actuals[w_sl], prevs[w_sl])["mape"]
-        weights[name] = (1.0 / max(m, 1e-4)) if (m and m > 0) else (1.0 if name == "naive" else 0.0)
-    if sum(weights.values()) <= 0:
-        weights = {name: (1.0 if name == "naive" else 0.0) for name in kept}
-    tot = sum(weights.values()) or 1.0
-    weights = {k: v / tot for k, v in weights.items()}
-
-    # ---- ensemble one-step predictions on the SCORE fold (renormalise per step) ----
-    ens_s = np.full(steps - half, np.nan)
-    for j, i in enumerate(range(half, steps)):
-        avail = [nm for nm in kept if np.isfinite(preds[nm][i]) and weights.get(nm, 0) > 0]
-        if not avail:
-            continue
-        wsum = sum(weights[nm] for nm in avail)
-        ens_s[j] = sum(weights[nm] * preds[nm][i] for nm in avail) / wsum
-
-    actuals_s, prevs_s = actuals[s_sl], prevs[s_sl]
-    ens_metrics = _metrics(ens_s, actuals_s, prevs_s)
-    naive_s = _metrics(np.asarray(preds["naive"])[s_sl], actuals_s, prevs_s)
-    naive_mape, ens_mape = naive_s["mape"], ens_metrics["mape"]
-    skill = ((naive_mape - ens_mape) / naive_mape) if (naive_mape and ens_mape is not None and naive_mape > 0) else None
-    reliable = bool(skill is not None and skill > 0 and ens_metrics["directional"] is not None
-                    and ens_metrics["directional"] > 0.5)
-
-    # Per-model metrics for the leaderboard, also reported on the score fold.
-    per_model = {nm: _metrics(np.asarray(preds[nm])[s_sl], actuals_s, prevs_s) for nm in kept}
-
-    # ---- multi-step ensemble forecast (kept models + fold-1 weights) ----
-    model_forecasts: Dict[str, np.ndarray] = {}
-    for name in kept:
+    # ---- final forecasts on the full series (one per model, MAX_H steps) ----
+    final_fc: Dict[str, np.ndarray] = {}
+    for nm, fn in models:
         try:
-            fc = np.asarray(fns[name](prices, horizon), dtype=float)
-            if np.all(np.isfinite(fc)):
-                model_forecasts[name] = fc
+            fc = np.asarray(fn(prices, MAX_H), dtype=float)
+            if np.all(np.isfinite(fc)) and np.all(fc > 0):
+                final_fc[nm] = fc
         except Exception:
             pass
-    avail_fc = [nm for nm in model_forecasts if weights.get(nm, 0) > 0]
-    if not avail_fc:  # last-resort safety net
-        model_forecasts["naive"] = _naive(prices, horizon)
-        weights["naive"] = weights.get("naive", 1.0) or 1.0
-        avail_fc = ["naive"]
-    wsum = sum(weights[nm] for nm in avail_fc) or 1.0
-    point = np.zeros(horizon)
-    for nm in avail_fc:
-        point += (weights[nm] / wsum) * model_forecasts[nm]
-    point = np.clip(point, 0.0, None)
-
-    # ---- 80% band: MC bootstrap of ensemble one-step relative errors (score fold) ----
-    rel = (actuals_s - ens_s) / np.where(actuals_s != 0, actuals_s, np.nan)
-    rel = rel[np.isfinite(rel)]
-    rel = np.clip(rel, -0.99, 1.0)  # bound extreme errors so the band stays sensible
-    if len(rel) >= 5:
-        rng = np.random.default_rng(42)  # fixed seed -> band is reproducible across reruns
-        draws = rng.choice(rel, size=(MC_SIMS, horizon), replace=True)
-        sim_paths = point[None, :] * np.cumprod(1.0 + draws, axis=1)
-        lower = np.clip(np.percentile(sim_paths, 10, axis=0), 0.0, None)
-        upper = np.clip(np.percentile(sim_paths, 90, axis=0), 0.0, None)
-    else:
-        lower, upper = point.copy(), point.copy()
+    if "naive" not in final_fc:
+        final_fc["naive"] = _naive(prices, MAX_H)
 
     current_price = float(prices[-1])
-    predicted_price = float(point[-1])
-    expected_return = (predicted_price - current_price) / current_price if current_price else 0.0
-    signal, reasoning = make_signal(expected_return, ens_mape, reliable)
-
     last_date = dates[-1]
-    forecast_dates = [last_date + timedelta(days=h + 1) for h in range(horizon)]
+    rng = np.random.default_rng(42)  # fixed seed -> bands reproducible across reruns
+    base_rel: Optional[np.ndarray] = None  # one-step ensemble errors, set from the 1D pass
+
+    horizons_out: List[Dict[str, Any]] = []
+    for label, h in HORIZONS.items():
+        # Valid origins for this horizon (actual price h steps ahead must exist).
+        valid = [j for j, t in enumerate(origins) if t + h <= n]
+        if len(valid) < 4:
+            horizons_out.append(_unreliable_horizon(label, h, current_price, last_date,
+                                                    final_fc, names, dates, prices))
+            continue
+
+        # h-step preds / actuals / anchors for the valid origins.
+        preds_by = {nm: np.asarray([model_fc[nm][j][h - 1] for j in valid]) for nm in names}
+        actual = np.asarray([prices[origins[j] + h - 1] for j in valid])
+        anchor = np.asarray([anchors[j] for j in valid])
+
+        W = len(valid)
+        half = max(1, W // 2)
+        wi, si = list(range(half)), list(range(half, W))
+
+        kept = [nm for nm in names
+                if nm == "naive" or float(np.isfinite(preds_by[nm][wi]).mean()) >= 0.5]
+        weights = _fit_weights({nm: preds_by[nm][wi] for nm in kept},
+                               actual[wi], anchor[wi], kept)
+
+        ens_s = _ensemble_preds({nm: preds_by[nm][si] for nm in kept}, weights, kept)
+        actual_s, anchor_s = actual[si], anchor[si]
+        ens_m = _metrics(ens_s, actual_s, anchor_s)
+        naive_m = _metrics(preds_by["naive"][si], actual_s, anchor_s)
+        skill = ((naive_m["mape"] - ens_m["mape"]) / naive_m["mape"]
+                 if (naive_m["mape"] and ens_m["mape"] is not None and naive_m["mape"] > 0) else None)
+        reliable = bool(skill is not None and skill > 0 and ens_m["directional"] is not None
+                        and ens_m["directional"] > 0.5 and len(si) >= MIN_SCORE)
+
+        # Capture one-step ensemble errors (from the 1D horizon) for the bands.
+        if h == 1:
+            r = (actual_s - ens_s) / np.where(actual_s != 0, actual_s, np.nan)
+            r = r[np.isfinite(r)]
+            base_rel = np.clip(r, -0.99, 1.0) if len(r) else None
+
+        # Final ensemble path for this horizon (full-data forecasts, horizon weights).
+        avail = [nm for nm in kept if nm in final_fc and weights.get(nm, 0) > 0]
+        if not avail:
+            avail, weights = ["naive"], {**weights, "naive": 1.0}
+        wsum = sum(weights[nm] for nm in avail) or 1.0
+        path = np.zeros(h)
+        for nm in avail:
+            path += (weights[nm] / wsum) * final_fc[nm][:h]
+        path = np.clip(path, 0.0, None)
+
+        lower, upper = _band(path, base_rel, h, rng)
+        predicted_price = float(path[-1])
+        exp_ret = (predicted_price - current_price) / current_price if current_price else 0.0
+        signal, reasoning = make_signal(exp_ret, ens_m["mape"], reliable)
+
+        horizons_out.append({
+            "label": label, "h": h,
+            "predicted_price": predicted_price,
+            "expected_return": exp_ret, "predicted_change": exp_ret * 100.0,
+            "forecast_path": [float(x) for x in path],
+            "forecast_dates": [last_date + timedelta(days=k + 1) for k in range(h)],
+            "lower": [float(x) for x in lower], "upper": [float(x) for x in upper],
+            "mape": ens_m["mape"], "mae": ens_m["mae"], "rmse": ens_m["rmse"],
+            "directional": ens_m["directional"], "naive_mape": naive_m["mape"],
+            "skill": skill, "reliable": reliable, "signal": signal, "reasoning": reasoning,
+            "windows": W, "score_windows": len(si),
+        })
 
     return {
         "source": source,
-        "engine": "Ensemble: " + " + ".join(kept),
+        "engine": "Ensemble: " + " + ".join(names),
         "days": days,
-        "horizon": horizon,
         "n_history": n,
-        "lookback": lookback,
-        "validated_days": steps - half,  # out-of-sample steps the metrics are scored on
+        "current_price": current_price,
         "history_dates": dates,
         "history_prices": [float(p) for p in prices],
-        "forecast_dates": forecast_dates,
-        "forecast_prices": [float(p) for p in point],
-        "lower": [float(x) for x in lower],
-        "upper": [float(x) for x in upper],
-        "current_price": current_price,
+        "horizons": horizons_out,
+    }
+
+
+def _band(path: np.ndarray, base_rel: Optional[np.ndarray], h: int, rng) -> Tuple[np.ndarray, np.ndarray]:
+    """80% band: bootstrap one-step rel errors, compounded out to each step."""
+    if base_rel is not None and len(base_rel) >= 5:
+        draws = rng.choice(base_rel, size=(MC_SIMS, h), replace=True)
+        sim = path[None, :] * np.cumprod(1.0 + draws, axis=1)
+        return (np.clip(np.percentile(sim, 10, axis=0), 0.0, None),
+                np.clip(np.percentile(sim, 90, axis=0), 0.0, None))
+    return path.copy(), path.copy()
+
+
+def _unreliable_horizon(label, h, current_price, last_date, final_fc, names, dates, prices):
+    """Produce a point forecast for a horizon we couldn't backtest (history too short)."""
+    path = np.clip(final_fc.get("naive", _naive(prices, h))[:h], 0.0, None)
+    predicted_price = float(path[-1]) if len(path) else current_price
+    exp_ret = (predicted_price - current_price) / current_price if current_price else 0.0
+    return {
+        "label": label, "h": h,
         "predicted_price": predicted_price,
-        "expected_return": expected_return,
-        "predicted_change": expected_return * 100.0,
-        "models": [{"name": nm, **per_model[nm], "weight": weights.get(nm, 0.0)} for nm in kept],
-        "ensemble": ens_metrics,
-        "naive_mape": naive_mape,
-        "skill": skill,
-        "reliable": reliable,
-        "signal": signal,
-        "reasoning": reasoning,
+        "expected_return": exp_ret, "predicted_change": exp_ret * 100.0,
+        "forecast_path": [float(x) for x in path],
+        "forecast_dates": [last_date + timedelta(days=k + 1) for k in range(h)],
+        "lower": [float(x) for x in path], "upper": [float(x) for x in path],
+        "mape": None, "mae": None, "rmse": None, "directional": None, "naive_mape": None,
+        "skill": None, "reliable": False,
+        "signal": "Hold", "reasoning": "Not enough history to backtest this horizon — Hold.",
+        "windows": 0, "score_windows": 0,
     }
