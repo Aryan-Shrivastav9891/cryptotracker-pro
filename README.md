@@ -11,7 +11,7 @@ A single, smooth **Streamlit** crypto dashboard: track live cryptocurrency price
 ## 🎯 What it does (functionality summary)
 
 - **Live market data** — pulls the top ~250 coins from the **CoinGecko** API (prices in ₹ INR), cached so it stays fast and avoids rate limits.
-- **7 pages** with a sidebar navigation: All, Altcoins, Memecoins, Profitable, AI Predicted, Future Gains, and Coin Details.
+- **9 pages** with sidebar navigation: All, Altcoins, Memecoins, Profitable, AI Predicted, Future Gains, **Intraday Signal Lab**, **Live Paper-Trading**, and Coin Details.
 - **Fast price estimate on every card** — a per-coin, scale-correct log-trend projection (~1 day ahead) shown on the coin grids.
 - **Real AI forecasting (Future page)** — for a chosen coin it fetches real daily history, runs a **walk-forward backtest** on unseen data, then forecasts ahead with an **80% confidence band**, reports honest accuracy (**MAPE / directional accuracy / MAE**), and gives a **Strong Buy → Sell** signal grounded in that measured error.
 - **Deep coin detail** — 7-day price chart, market cap / volume / supply, multi-currency prices (INR / USD / EUR / BTC), all-time high/low with dates, community stats (Twitter / Reddit / Telegram), developer stats (GitHub stars / forks / commits), official links, and full description (HTML-sanitized).
@@ -32,7 +32,37 @@ A single, smooth **Streamlit** crypto dashboard: track live cryptocurrency price
 | **Profitable** | Coins up **>10% in 24h**, shown as a sortable table **and** a card grid. |
 | **AI Predicted** | Coins ranked by predicted upside; slider to set a minimum-upside threshold. |
 | **Future Gains** | Pick a coin → train + **backtest** a forecast model → confidence band, accuracy metrics, signal, news. |
+| **Intraday Signal Lab** | Scan coins on **1h/2h**, cost-aware out-of-sample edge ranking + regime-driven **Entry Playbook** (dip vs breakout) — "No-edge" when none. |
+| **Live Paper-Trading** | A **simulated**, prequential online-learning session on 1-minute candles (see below). No real orders. |
 | **Coin Details** | Full single-coin breakdown: chart, market data, prices, ATH/ATL, community + dev stats, links, about. |
+
+---
+
+## 🔴 Live Paper-Trading Lab (simulated — **no real orders, ever**)
+
+A hands-on, **educational** sandbox that shows — live — how hard short-term trading
+really is and why **risk management beats prediction**. It places **zero real orders**.
+
+**How it works (sidebar → AI → Live Paper-Trading → Start):**
+- Every ~minute it fetches the latest **closed 1-minute candles** via **ccxt** and stores
+  them to **SQLite** (deduplicated, so a restart resumes the session).
+- An **online model** (scikit-learn `SGDClassifier`) learns **prequentially** —
+  *predict-then-update* — so there is **no look-ahead leakage**.
+- Paper trades act on the **next bar** (1-bar latency, never the signal-bar close) and pay
+  **taker fee + slippage + funding**.
+- It reports, measured **live and net of costs**: hit-rate, win-rate, expectancy, **net
+  Sharpe**, **Brier** calibration + reliability, and **skill vs a cost-aware naive baseline**,
+  with a running **paper-equity curve** and a **drawdown kill-switch**.
+- Each tick it states the truth plainly — **"No edge — No trade"** is the normal outcome for
+  1-minute crypto; it says clearly if (rarely) it beat naive.
+
+**Controls:** coin, session duration (5–60 min), tick interval (60–180 s), and a signal
+threshold. A permanent **risk panel** shows leverage liquidation math and the reality that
+~half of all trades are wrong — survival comes from small losses + sizing, not accuracy.
+
+> Implementation: `lib/live.py` (engine) + `views/live.py` (UI). It auto-refreshes via
+> `st.fragment(run_every=...)` — no background threads — and persists candles to
+> `data/live/<COIN>_1m.db` (git-ignored). **It never sends an order to any exchange.**
 
 ---
 
@@ -46,11 +76,13 @@ A single, smooth **Streamlit** crypto dashboard: track live cryptocurrency price
 | **numpy** | Numerical math behind the trend estimate and the forecasting pipeline. |
 | **plotly** | Interactive price charts, forecast charts, and confidence-band fills. |
 | **statsmodels** | The forecasting engine — Holt damped-trend Exponential Smoothing + intervals. |
-| **ccxt** *(scripts only)* | Free, key-less OHLCV candle download from Binance and other exchanges. |
-| **scikit-learn** *(scripts only)* | `StandardScaler` + `TimeSeriesSplit` for the train/test split script. |
+| **scikit-learn** | ML ensemble + the online `SGDClassifier` for the Live Paper-Trading session. |
+| **ccxt** | Key-less hourly / 1-minute OHLCV from Binance (Intraday + Live pages); CoinGecko fallback. |
+| **sqlite3** *(stdlib)* | Restart-safe storage of the Live session's candles. |
+| **feedparser / vaderSentiment** *(optional)* | Keyless RSS news + headline sentiment (graceful fallback). |
 
-> The **app** needs: `streamlit, requests, pandas, numpy, plotly, statsmodels` (see `requirements.txt`).
-> The **scripts** additionally need: `ccxt, scikit-learn` (see `scripts/requirements.txt`).
+> The **app** needs: `streamlit, requests, pandas, numpy, plotly, statsmodels, scikit-learn, ccxt`
+> (see `requirements.txt`). Optional: `feedparser, vaderSentiment`. The **scripts** use `ccxt + scikit-learn`.
 
 ---
 
