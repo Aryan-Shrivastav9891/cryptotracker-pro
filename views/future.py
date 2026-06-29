@@ -61,9 +61,12 @@ name = coin.get("name", coin_id)
 symbol = (coin.get("symbol") or "").upper()
 
 # --- train + backtest (all horizons) + sentiment ----------------------------
-with st.status(f"Training ensemble for {name} across all horizons…", expanded=True) as status:
+with st.status(f"Training the multi-model ensemble for {name}…", expanded=True) as status:
     st.write(f"📥 Loading ~{days} days of daily prices (Binance → CoinGecko fallback)…")
-    st.write("🧪 Walk-forward backtest, h-step-ahead, for 1D / 4D / 1W / 1M…")
+    st.write("🧪 Walk-forward backtest of every model, h-step-ahead, for 1D / 4D / 1W / 1M…")
+    st.write("🧠 Dynamic selection (drop models worse than naive) → 3 combiners → conformal bands…")
+    st.caption("⏳ First run for a coin trains ~14 models across many windows (~1–2 min). "
+               "It's cached for an hour after that.")
     result = forecast.forecast_coin(coin_id, symbol, days=days)
     if not result:
         status.update(label="Not enough history to backtest", state="error")
@@ -72,7 +75,8 @@ with st.status(f"Training ensemble for {name} across all horizons…", expanded=
         st.stop()
     st.write("📰 Fetching news + scoring sentiment…")
     sent = news.news_sentiment(symbol, name=name, limit=8)
-    status.update(label=f"Done · {result['engine']} · data: {result['source']}", state="complete")
+    status.update(label=f"Done · {result['engine'][:70]}… · data: {result['source']}",
+                  state="complete")
 
 horizons = result["horizons"]
 current = result["current_price"]
@@ -110,31 +114,37 @@ with st.container(border=True):
         # News sentiment applies only as a soft ±1-notch tilt, and only when reliable.
         disp_sig = (forecast.tilt_signal(hd["signal"], sent["label"])
                     if (sent["available"] and hd["reliable"]) else hd["signal"])
+        # Too few out-of-sample windows -> don't show noisy skill/coverage numbers.
+        low = hd["score_windows"] < forecast.MIN_SCORE
         rows.append({
             "Horizon": hd["label"],
             "Predicted": format_inr(hd["predicted_price"]),
             "Exp. move": f"{hd['predicted_change']:+.2f}%",
-            "MAPE": f"{hd['mape']*100:.1f}%" if hd["mape"] is not None else "N/A",
-            "Directional": f"{hd['directional']*100:.0f}%" if hd["directional"] is not None else "N/A",
-            "MAE": format_inr(hd["mae"]) if hd["mae"] is not None else "N/A",
-            "RMSE": format_inr(hd["rmse"]) if hd["rmse"] is not None else "N/A",
-            "Skill vs naive": f"{hd['skill']*100:+.0f}%" if hd["skill"] is not None else "N/A",
-            "Reliable": "✅" if hd["reliable"] else "⚠️ no edge",
+            "MAPE": f"{hd['mape']*100:.1f}%" if hd["mape"] is not None else "—",
+            "Directional": f"{hd['directional']*100:.0f}%" if hd["directional"] is not None else "—",
+            "Skill": "—" if (low or hd["skill"] is None) else f"{hd['skill']*100:+.0f}%",
+            "Coverage": "—" if (low or hd["coverage"] is None) else f"{hd['coverage']*100:.0f}%",
+            "Combiner": hd["combiner"] or "—",
+            "Reliable": "✅" if hd["reliable"] else ("🔸 low data" if low else "⚠️ no edge"),
             "Signal": disp_sig,
         })
-    # Native column-header tooltips (the cleanest hover for tabular metrics).
+    # Column tooltips built dynamically from the glossary (add a term = one line there).
+    _COL_TERMS = {"MAPE": "MAPE", "Directional": "Directional accuracy", "Skill": "Skill score",
+                  "Coverage": "Confidence band", "Combiner": "Ensemble"}
     st.dataframe(
         pd.DataFrame(rows), width="stretch", hide_index=True,
-        column_config={
-            "MAPE": st.column_config.TextColumn("MAPE", help=glossary.get_definition("MAPE")),
-            "Directional": st.column_config.TextColumn(
-                "Directional", help=glossary.get_definition("Directional accuracy")),
-            "MAE": st.column_config.TextColumn("MAE", help=glossary.get_definition("MAE")),
-            "RMSE": st.column_config.TextColumn("RMSE", help=glossary.get_definition("RMSE")),
-            "Skill vs naive": st.column_config.TextColumn(
-                "Skill vs naive", help=glossary.get_definition("Skill score")),
-        },
+        column_config={c: st.column_config.TextColumn(c, help=glossary.get_definition(t))
+                       for c, t in _COL_TERMS.items()},
     )
+    # Transparency: which models survived selection per horizon (the spec's requirement).
+    bits = []
+    for hd in horizons:
+        used = ", ".join(hd["models_used"]) if hd["models_used"] else "naive only"
+        bits.append(f"**{hd['label']}** → {hd['combiner'] or 'n/a'} of [{used}]")
+    st.caption("🏁 Winning combiner + models: " + " · ".join(bits))
+    st.caption(f"📐 Coverage = measured share of real prices that fell inside the 80% band "
+               f"(target 80%). Engine: {len(result['models_available'])} models — "
+               f"{', '.join(result['models_available'])}.")
     if sent["available"] and any(h["reliable"] for h in horizons):
         st.caption(f"Signals for reliable horizons include a soft tilt from {sent['label'].lower()} news.")
 
