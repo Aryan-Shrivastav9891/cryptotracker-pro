@@ -55,6 +55,32 @@ pkill -f "streamlit run app.py"
 
 ---
 
+## 📰 News API key (optional)
+
+The **Future Gains** page shows news + sentiment. It works **with no key** (it falls
+back to free RSS feeds from CoinDesk, Cointelegraph and Decrypt). For richer,
+symbol-filtered news you can add a **free** CryptoCompare / CoinDesk Data API key:
+
+1. Get a free key at <https://developers.cryptocompare.com/> (or the CoinDesk Data API).
+2. Provide it in **either** of these ways (never hard-code it):
+
+   **Option A — environment variable**
+   ```bash
+   export CRYPTOCOMPARE_API_KEY="your_key_here"   # macOS/Linux
+   # setx CRYPTOCOMPARE_API_KEY "your_key_here"   # Windows
+   streamlit run app.py
+   ```
+
+   **Option B — Streamlit secrets** (create `.streamlit/secrets.toml`):
+   ```toml
+   CRYPTOCOMPARE_API_KEY = "your_key_here"
+   ```
+
+`.streamlit/secrets.toml` and `.env` are already git-ignored. Without a key the app
+silently uses the keyless RSS fallback — no setup needed.
+
+---
+
 ## 🔁 Common problems & fixes
 
 | Problem | Why | Fix |

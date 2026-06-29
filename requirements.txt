@@ -14,3 +14,4 @@ scikit-learn>=1.3        # HistGradientBoosting model in the ensemble
 ccxt>=4.0                # Binance daily OHLCV (key-less) for forecasting history;
                          # falls back to CoinGecko when unavailable
 vaderSentiment>=3.3      # news headline sentiment (falls back to "Neutral")
+feedparser>=6.0          # keyless RSS news fallback (works with no API key)
