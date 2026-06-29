@@ -69,10 +69,13 @@ def get_daily_closes(
             pass  # geo-block / network / unknown pair -> fall back
 
     # 2) Fall back to CoinGecko market_chart (caps ~365 days).
-    raw = coingecko.get_market_chart(coin_id, days=min(int(days), 365))
+    capped = min(int(days), 365)
+    raw = coingecko.get_market_chart(coin_id, days=capped)
     if raw:
         dates = [datetime.fromtimestamp(ts / 1000, tz=timezone.utc) for ts, _ in raw]
         closes = [float(p) for _, p in raw]
-        return dates, closes, "CoinGecko"
+        # Be transparent when the requested window was clamped to CoinGecko's limit.
+        label = "CoinGecko (365d max)" if int(days) > 365 else "CoinGecko"
+        return dates, closes, label
 
     return [], [], "none"

@@ -194,7 +194,7 @@ with b:
                 ts = art.get("published_on")
                 when = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%Y-%m-%d") if ts else ""
                 st.markdown(
-                    f"- [{art.get('title', 'Untitled')}]({art.get('url', '#')}) "
+                    f"- [{art.get('title') or 'Untitled'}]({art.get('url', '#')}) "
                     f"<span class='ctp-muted'>· {art.get('source', '')} {when}</span>",
                     unsafe_allow_html=True)
         else:
@@ -208,8 +208,9 @@ with st.container(border=True):
     edge = ("**beats** a naive random-walk baseline" if (skill is not None and skill > 0)
             else "does **not** beat a naive baseline")
     st.markdown(
-        f"Over the last **{result['lookback']} days** of *unseen* data, the ensemble's average "
-        f"error was **{mape_txt}** and it called the next day's direction **{dir_txt}** of the time — "
+        f"Over the last **{result['validated_days']} days** of *unseen, out-of-sample* data "
+        f"(weights were tuned on an earlier slice), the ensemble's average error was **{mape_txt}** "
+        f"and it called the next day's direction **{dir_txt}** of the time — "
         f"so it {edge} (**skill {skill_txt}**). "
         f"The forecast projects **{pct:+.2f}%** over the next **{horizon} days**, but the **80% band** shows "
         f"how wide the realistic range is. "
